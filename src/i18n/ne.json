@@ -1,0 +1,104 @@
+{
+    "common": {
+      "save": "सुरक्षित गर्नुस्",
+      "cancel": "रद्द गर्नुस्",
+      "done": "सम्पन्न",
+      "next": "अर्को",
+      "back": "पछाडि",
+      "loading": "लोड हुँदैछ...",
+      "error": "केही गलत भयो",
+      "retry": "फेरि प्रयास गर्नुस्",
+      "empty": "अहिले केही छैन"
+    },
+    "auth": {
+      "login": "लग इन",
+      "signup": "खाता बनाउनुस्",
+      "logout": "लग आउट",
+      "email": "इमेल",
+      "password": "पासवर्ड",
+      "forgot_password": "पासवर्ड भुल्नुभयो?",
+      "no_account": "खाता छैन?",
+      "have_account": "पहिल्यै खाता छ?"
+    },
+    "home": {
+      "greeting_morning": "शुभ प्रभात,",
+      "greeting_afternoon": "शुभ दिउँसो,",
+      "greeting_evening": "शुभ साँझ,",
+      "todays_rings": "आजका रिङहरू",
+      "quick_actions": "द्रुत कार्यहरू",
+      "todays_plan": "आजको योजना",
+      "streak_days": "दिनको स्ट्रिक"
+    },
+    "workout": {
+      "start": "वर्कआउट सुरु गर्नुस्",
+      "log_set": "सेट लग गर्नुस्",
+      "rest_timer": "विश्राम टाइमर",
+      "complete": "वर्कआउट सम्पन्न",
+      "weight_kg": "तौल (किग्रा)",
+      "reps": "रेप्स",
+      "set": "सेट",
+      "sets_completed": "सेट सम्पन्न",
+      "next_exercise": "अर्को व्यायाम",
+      "today_sets": "आजका सेटहरू"
+    },
+    "diet": {
+      "todays_nutrition": "आजको पोषण",
+      "calories_remaining": "क्यालोरी बाँकी",
+      "add_food": "खाना थप्नुस्",
+      "breakfast": "बिहानको खाना",
+      "lunch": "दिउँसोको खाना",
+      "dinner": "बेलुकाको खाना",
+      "snack": "खाजा",
+      "protein": "प्रोटिन",
+      "carbs": "कार्बोहाइड्रेट",
+      "fat": "फ्याट",
+      "water": "पानी"
+    },
+    "run": {
+      "start_run": "दौड सुरु गर्नुस्",
+      "pause": "रोक्नुस्",
+      "resume": "जारी राख्नुस्",
+      "end_run": "दौड समाप्त गर्नुस्",
+      "distance": "दूरी",
+      "pace": "गति",
+      "duration": "अवधि",
+      "calories": "क्यालोरी",
+      "heart_rate": "हृदय गति",
+      "km_splits": "किमी विभाजन"
+    },
+    "sleep": {
+      "log_sleep": "निद्रा लग गर्नुस्",
+      "bedtime": "सुत्ने समय",
+      "wake_time": "उठ्ने समय",
+      "duration": "अवधि",
+      "quality": "गुणस्तर",
+      "score": "निद्रा स्कोर"
+    },
+    "ai": {
+      "coach_name": "काई",
+      "placeholder": "काईलाई केही सोध्नुस्...",
+      "thinking": "काई सोच्दैछ...",
+      "quick_analyse": "मेरो हप्ता विश्लेषण गर्नुस्",
+      "quick_meal": "खाना योजना बनाउनुस्",
+      "quick_plateau": "म किन अगाडि बढ्दैन?",
+      "quick_workout": "आजको वर्कआउट"
+    },
+    "profile": {
+      "workouts": "वर्कआउट",
+      "km_run": "किमी दौड",
+      "streak": "स्ट्रिक",
+      "badges": "उपलब्धि ब्याजहरू",
+      "recent_activity": "भर्खरको गतिविधि"
+    },
+    "onboarding": {
+      "step": "चरण {{current}} / {{total}}",
+      "goal_title": "तपाईंको मुख्य लक्ष्य के हो?",
+      "goal_subtitle": "यसले काईलाई तपाईंको लागि सही योजना बनाउन मद्दत गर्छ।",
+      "goal_lose_weight": "तौल घटाउने",
+      "goal_build_muscle": "मांसपेशी बनाउने",
+      "goal_run_faster": "छिटो / धेरै दौड्ने",
+      "goal_flexibility": "लचिलोपन सुधार्ने",
+      "goal_health": "सामान्य स्वास्थ्य",
+      "continue": "जारी राख्नुस्"
+    }
+  }

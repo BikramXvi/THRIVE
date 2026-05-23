@@ -1,0 +1,964 @@
+# =============================================================================
+# FITNEPAL -- CURSOR AI RULES
+# Version: 1.0.0
+# Last updated: 2026-05-23
+# Maintainer: Solo dev (you)
+# Purpose: Permanent AI context for Cursor IDE. This file is read on every
+#          AI request. Keep it updated daily. Accuracy here = accurate AI output.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# SECTION 1: PROJECT IDENTITY
+# -----------------------------------------------------------------------------
+
+Project name:    FitNepal
+Type:            Cross-platform fitness platform (mobile-first, web, desktop)
+Target market:   Nepal (primary), South Asia (v2+), global (v3+)
+Business model:  Freemium SaaS -- Free / Pro (NPR 499/mo) / Elite (NPR 1499/mo)
+Current phase:   MVP -- 4-week solo build
+Architecture:    Monorepo with shared types and services across platforms
+
+
+# -----------------------------------------------------------------------------
+# SECTION 2: FULL TECHNOLOGY STACK
+# -----------------------------------------------------------------------------
+
+## 2.1 Mobile (primary platform)
+Runtime:         React Native 0.76 + Expo SDK 52
+Language:        TypeScript 5.6 (strict mode, no exceptions)
+Navigation:      React Navigation v7 (native stack + bottom tabs)
+State:           Zustand 5 (global/UI state) + TanStack Query v5 (server state)
+UI components:   React Native Paper 5 (base) + custom design system
+Charts:          Victory Native XL (runs on UI thread via Reanimated)
+Animations:      Reanimated 3 + Gesture Handler 2
+Maps:            react-native-maps (Apple Maps iOS, Google Maps Android)
+GPS:             expo-location (foreground + background)
+Camera:          expo-camera (barcode scan, progress photos)
+Health:          expo-health (HealthKit iOS, Health Connect Android)
+Notifications:   expo-notifications (push, local, scheduled)
+Storage:         expo-secure-store (sensitive), AsyncStorage (general cache)
+Forms:           React Hook Form + Zod (validation)
+Payments:        react-native-purchases (RevenueCat SDK)
+
+## 2.2 Web application
+Framework:       Next.js 15 (App Router, React Server Components)
+Language:        TypeScript 5.6 strict
+Styling:         Tailwind CSS v4 + shadcn/ui components
+State:           Zustand + TanStack Query (same stores as mobile where possible)
+Auth:            Supabase Auth SSR helpers (@supabase/ssr)
+Deployment:      Vercel (automatic deploys on push to main)
+
+## 2.3 Desktop application
+Framework:       Tauri v2 (wraps Next.js web app)
+Targets:         Windows (.exe installer), macOS (.dmg), Linux (.AppImage)
+Build:           GitHub Actions matrix build (Windows, macOS, Linux runners)
+Distribution:    GitHub Releases (direct download), future: Winget, Homebrew
+
+## 2.4 Backend and database
+Primary BaaS:    Supabase (PostgreSQL 15 + PostgREST + GoTrue + Realtime)
+Database:        PostgreSQL 15.x via Supabase (managed, no self-hosted)
+Auth:            Supabase GoTrue (email, Google OAuth, Apple OAuth, phone OTP)
+File storage:    Supabase Storage (profile photos, progress photos, avatars)
+Media storage:   Cloudflare R2 (workout videos, large exports -- zero egress fees)
+Video delivery:  Cloudflare Stream (HLS adaptive bitrate for workout videos)
+Cache layer:     Upstash Redis (serverless Redis -- rate limiting, AI response cache)
+Edge functions:  Supabase Edge Functions (Deno runtime -- webhooks, AI orchestration)
+Custom API:      Node.js 22 + Fastify 5 on Railway (complex business logic, v2+)
+CDN:             Cloudflare (global, in front of all static assets)
+Search:          PostgreSQL full-text search (FTS) for food and exercise database
+Vectors:         pgvector extension in Supabase (AI embeddings for semantic search)
+
+## 2.5 AI and intelligence
+Primary model:   Claude claude-sonnet-4-5 (Anthropic API) -- AI coach chat and analysis
+Fast model:      claude-haiku-4-5-20251001 -- quick suggestions, autocomplete food
+Embeddings:      text-embedding-3-small (OpenAI) via Supabase pgvector
+Context window:  Always include last 7 days of user data in system prompt
+Caching:         Upstash Redis -- cache identical AI responses for 24 hours
+Cost control:    Rate limit AI requests per user tier (Free: 5/day, Pro: 50/day, Elite: unlimited)
+
+## 2.6 Payments
+Nepal (primary): eSewa REST API v2 + Khalti REST API (web redirect flow)
+Mobile IAP:      RevenueCat (handles App Store and Play Store billing, receipt validation)
+International:   Stripe (web subscriptions for non-Nepal users, v2+)
+Commissions:     Trainer marketplace -- 15% platform fee, 85% trainer payout
+Payouts:         eSewa merchant API / Khalti merchant API (Nepal), Stripe Connect (international)
+
+## 2.7 DevOps and infrastructure
+Version control: Git + GitHub (private repository)
+CI/CD:           GitHub Actions
+  -- On PR:      ESLint, TypeScript check, Vitest unit tests, Expo build check
+  -- On main:    Vercel deploy (web), Expo EAS update (mobile OTA), Sentry release
+  -- On tag:     EAS Build + Submit to App Store and Play Store, Tauri desktop build
+Mobile builds:   Expo EAS Build (cloud builds -- no local Xcode needed for Android)
+OTA updates:     Expo EAS Update (push JS updates without App Store review)
+Error tracking:  Sentry (React Native SDK + Next.js SDK -- source maps uploaded on deploy)
+Analytics:       PostHog (product analytics, feature flags, session replay)
+Monitoring:      Upstash Redis metrics + Supabase dashboard + Railway metrics
+Secrets:         GitHub Actions secrets + Expo EAS secrets (never in .env committed)
+
+## 2.8 Developer tooling
+IDE:             Cursor (primary) -- this file provides AI context
+AI assistant:    Claude claude-sonnet-4-5 via Claude.ai (architecture, complex debugging)
+Testing:         Vitest (unit) + React Native Testing Library (component) + Maestro (E2E)
+API testing:     Bruno (open-source Postman alternative, collections committed to repo)
+Linting:         ESLint 9 (flat config) + Prettier 3
+Git hooks:       Lefthook (pre-commit: lint + type-check, commit-msg: conventional commits)
+Commit format:   Conventional Commits (feat, fix, chore, docs, refactor, test, perf)
+
+
+# -----------------------------------------------------------------------------
+# SECTION 3: SYSTEM ARCHITECTURE
+# -----------------------------------------------------------------------------
+
+## 3.1 Architecture pattern
+Pattern:         Layered architecture with clear boundaries
+Mobile:          Screens -> Hooks -> Services -> Supabase client
+Web:             Pages/Layouts -> Components -> Server Actions -> Supabase SSR client
+Backend:         Routes -> Controllers -> Services -> Repository -> Database
+
+## 3.2 Data flow
+Client request   -> TanStack Query (cache check)
+Cache miss       -> Supabase PostgREST (direct from client, RLS enforced)
+Complex ops      -> Supabase Edge Function (Deno) or Node.js API (Railway)
+AI requests      -> Edge Function -> Upstash cache check -> Anthropic API
+Real-time        -> Supabase Realtime (PostgreSQL logical replication via WebSocket)
+
+## 3.3 Load balancing and scaling strategy
+Supabase:        Managed -- pgBouncer connection pooling built in (pool mode: transaction)
+                 Connection limit: 15 direct, 200 pooled (free tier)
+                 Scale path: Supabase Pro (dedicated resources) at 10K+ MAU
+Vercel:          Automatic global edge network -- no configuration required
+                 Serverless functions auto-scale to zero, cold starts mitigated by edge runtime
+Railway:         Vertical scale (CPU/RAM) via dashboard, horizontal via replicas (v2+)
+                 Health check endpoint: GET /health -- Railway auto-restarts on failure
+Redis:           Upstash serverless -- no connection management, auto-scale
+                 Rate limiting pattern: sliding window per user ID + IP
+Cloudflare:      CDN caches static assets and R2 media globally
+                 R2 zero egress -- no bandwidth cost for video delivery
+Database:        Read replicas (Supabase Pro) for analytics queries (v2+)
+                 Separate read/write paths via SUPABASE_READ_URL env var
+
+## 3.4 Database connection strategy
+ORM:             None -- raw Supabase client (PostgREST) for client-side
+                 Raw SQL via Supabase Edge Functions for complex server queries
+Pooling:         pgBouncer (Supabase managed) -- always use pooled connection string
+                 Direct connection only for migrations (prisma migrate, supabase db push)
+Migrations:      Supabase CLI (supabase db diff -> supabase db push)
+                 All migrations in /supabase/migrations/ -- committed to repo
+Indexes:         Declared in migration files -- never added ad hoc
+                 Required: every foreign key, every column used in WHERE or ORDER BY
+
+## 3.5 Caching strategy
+Layer 1:         TanStack Query client-side cache (stale-while-revalidate)
+                 staleTime: 5 minutes for user data, 1 hour for exercise/food library
+Layer 2:         Upstash Redis server-side cache
+                 AI responses: 24-hour TTL keyed by (user_id + prompt_hash)
+                 Food search results: 1-hour TTL keyed by search query
+                 Leaderboards: 5-minute TTL (acceptable staleness for ranking)
+Layer 3:         Cloudflare CDN for static assets (1-year cache, content-hash filenames)
+Layer 4:         AsyncStorage on device for offline support
+                 Workout sessions, food log, user profile cached locally
+
+## 3.6 Security architecture
+Authentication:  Supabase GoTrue -- JWT tokens (1-hour expiry, 30-day refresh)
+Authorization:   Row Level Security (RLS) on every table -- no exceptions
+                 RLS policies in /supabase/migrations/ -- reviewed before every deploy
+API security:    Rate limiting via Upstash Redis on all Edge Functions
+                 100 requests/minute per authenticated user
+                 10 requests/minute per unauthenticated IP
+Secrets:         All secrets in environment variables -- never in source code
+                 Required: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY,
+                           ANTHROPIC_API_KEY, REVENUECAT_API_KEY, UPSTASH_URL,
+                           UPSTASH_TOKEN, ESEWA_SECRET, KHALTI_SECRET
+Encryption:      DMs: AES-256-GCM client-side encryption (keys never leave device)
+                 Progress photos: Supabase Storage private buckets (signed URLs, 1-hour expiry)
+                 All transit: TLS 1.3 minimum
+CORS:            Explicit allowlist -- no wildcard origins in production
+Content:         Helmet.js on Node.js API, security headers via Vercel config
+Audit log:       All write operations logged to audit_log table (user_id, action, timestamp, ip)
+
+
+# -----------------------------------------------------------------------------
+# SECTION 4: DATABASE SCHEMA
+# -----------------------------------------------------------------------------
+
+## 4.1 Core tables (always reference these for queries)
+
+users
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  email           text UNIQUE NOT NULL
+  username        text UNIQUE NOT NULL
+  display_name    text
+  avatar_url      text
+  date_of_birth   date
+  gender          text CHECK (gender IN ('male','female','other','prefer_not_to_say'))
+  height_cm       numeric(5,1)
+  weight_kg       numeric(5,1)
+  goal            text CHECK (goal IN ('lose_weight','build_muscle','run_faster','flexibility','general_health'))
+  fitness_level   text CHECK (fitness_level IN ('beginner','intermediate','advanced'))
+  activity_level  text CHECK (activity_level IN ('sedentary','lightly_active','moderately_active','very_active'))
+  equipment       text[] DEFAULT '{}'
+  language        text DEFAULT 'ne' CHECK (language IN ('ne','en'))
+  units           text DEFAULT 'metric' CHECK (units IN ('metric','imperial'))
+  tier            text DEFAULT 'free' CHECK (tier IN ('free','pro','elite'))
+  stripe_id       text
+  revenuecat_id   text
+  timezone        text DEFAULT 'Asia/Kathmandu'
+  onboarded_at    timestamptz
+  created_at      timestamptz DEFAULT now()
+  updated_at      timestamptz DEFAULT now()
+
+workout_sessions
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  program_id      uuid REFERENCES programs(id) ON DELETE SET NULL
+  name            text NOT NULL
+  notes           text
+  started_at      timestamptz NOT NULL
+  completed_at    timestamptz
+  duration_seconds integer
+  total_volume_kg numeric(10,2)
+  total_sets      integer DEFAULT 0
+  calories_burned integer
+  rpe_average     numeric(3,1)
+  is_public       boolean DEFAULT false
+  created_at      timestamptz DEFAULT now()
+
+workout_sets
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  session_id      uuid REFERENCES workout_sessions(id) ON DELETE CASCADE
+  exercise_id     uuid REFERENCES exercises(id) ON DELETE RESTRICT
+  set_number      integer NOT NULL
+  weight_kg       numeric(6,2)
+  reps            integer
+  duration_seconds integer
+  distance_m      numeric(8,2)
+  rpe             integer CHECK (rpe BETWEEN 1 AND 10)
+  is_warmup       boolean DEFAULT false
+  is_pr           boolean DEFAULT false
+  logged_at       timestamptz DEFAULT now()
+
+exercises
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  name            text NOT NULL
+  name_ne         text
+  category        text CHECK (category IN ('push','pull','legs','yoga','hiit','cardio','other'))
+  muscle_group    text[] NOT NULL
+  equipment       text[] DEFAULT '{}'
+  difficulty      text CHECK (difficulty IN ('beginner','intermediate','advanced'))
+  instructions    text
+  instructions_ne text
+  video_url       text
+  thumbnail_url   text
+  is_custom       boolean DEFAULT false
+  created_by      uuid REFERENCES users(id) ON DELETE SET NULL
+  created_at      timestamptz DEFAULT now()
+
+programs
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  name            text NOT NULL
+  name_ne         text
+  description     text
+  category        text
+  duration_weeks  integer
+  days_per_week   integer
+  difficulty      text
+  equipment       text[]
+  is_official     boolean DEFAULT false
+  created_by      uuid REFERENCES users(id) ON DELETE SET NULL
+  created_at      timestamptz DEFAULT now()
+
+meal_logs
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  food_item_id    uuid REFERENCES food_items(id) ON DELETE RESTRICT
+  meal_type       text CHECK (meal_type IN ('breakfast','lunch','dinner','snack'))
+  serving_size    numeric(8,2) NOT NULL
+  serving_unit    text NOT NULL
+  calories        integer NOT NULL
+  protein_g       numeric(6,2)
+  carbs_g         numeric(6,2)
+  fat_g           numeric(6,2)
+  fibre_g         numeric(6,2)
+  logged_at       timestamptz DEFAULT now()
+  date            date NOT NULL DEFAULT CURRENT_DATE
+
+food_items
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  name            text NOT NULL
+  name_ne         text
+  brand           text
+  barcode         text UNIQUE
+  is_nepali       boolean DEFAULT false
+  calories_per_100g integer NOT NULL
+  protein_per_100g  numeric(6,2)
+  carbs_per_100g    numeric(6,2)
+  fat_per_100g      numeric(6,2)
+  fibre_per_100g    numeric(6,2)
+  serving_size    numeric(8,2)
+  serving_unit    text
+  is_verified     boolean DEFAULT false
+  submitted_by    uuid REFERENCES users(id) ON DELETE SET NULL
+  created_at      timestamptz DEFAULT now()
+
+run_sessions
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  activity_type   text CHECK (activity_type IN ('run','walk','hike','cycle'))
+  distance_m      numeric(10,2) NOT NULL
+  duration_seconds integer NOT NULL
+  avg_pace_spm    integer
+  avg_speed_mps   numeric(6,3)
+  avg_hr_bpm      integer
+  max_hr_bpm      integer
+  calories_burned integer
+  elevation_gain_m numeric(8,2)
+  route_geojson   jsonb
+  splits          jsonb
+  started_at      timestamptz NOT NULL
+  is_public       boolean DEFAULT false
+  created_at      timestamptz DEFAULT now()
+
+sleep_logs
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  bedtime         timestamptz NOT NULL
+  wake_time       timestamptz NOT NULL
+  duration_minutes integer NOT NULL
+  quality_rating  integer CHECK (quality_rating BETWEEN 1 AND 5)
+  sleep_score     integer CHECK (sleep_score BETWEEN 0 AND 100)
+  deep_minutes    integer
+  rem_minutes     integer
+  light_minutes   integer
+  awake_minutes   integer
+  notes           text
+  source          text DEFAULT 'manual' CHECK (source IN ('manual','apple_health','google_health','garmin'))
+  date            date NOT NULL DEFAULT CURRENT_DATE
+  created_at      timestamptz DEFAULT now()
+
+body_metrics
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  weight_kg       numeric(5,2)
+  body_fat_pct    numeric(4,2)
+  chest_cm        numeric(5,2)
+  waist_cm        numeric(5,2)
+  hips_cm         numeric(5,2)
+  arms_cm         numeric(5,2)
+  thighs_cm       numeric(5,2)
+  neck_cm         numeric(5,2)
+  photo_url       text
+  notes           text
+  logged_at       timestamptz DEFAULT now()
+  date            date NOT NULL DEFAULT CURRENT_DATE
+
+personal_records
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  exercise_id     uuid REFERENCES exercises(id) ON DELETE CASCADE
+  record_type     text CHECK (record_type IN ('max_weight','max_reps','max_volume','max_distance','fastest_pace'))
+  value           numeric(10,3) NOT NULL
+  unit            text NOT NULL
+  achieved_at     timestamptz NOT NULL
+  session_id      uuid REFERENCES workout_sessions(id) ON DELETE SET NULL
+  UNIQUE (user_id, exercise_id, record_type)
+
+follows
+  follower_id     uuid REFERENCES users(id) ON DELETE CASCADE
+  following_id    uuid REFERENCES users(id) ON DELETE CASCADE
+  created_at      timestamptz DEFAULT now()
+  PRIMARY KEY (follower_id, following_id)
+  CHECK (follower_id != following_id)
+
+kudos
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  giver_id        uuid REFERENCES users(id) ON DELETE CASCADE
+  activity_type   text CHECK (activity_type IN ('workout','run','pr'))
+  activity_id     uuid NOT NULL
+  created_at      timestamptz DEFAULT now()
+  UNIQUE (giver_id, activity_type, activity_id)
+
+messages
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE
+  sender_id       uuid REFERENCES users(id) ON DELETE CASCADE
+  content_encrypted text NOT NULL
+  content_iv      text NOT NULL
+  read_at         timestamptz
+  deleted_at      timestamptz
+  created_at      timestamptz DEFAULT now()
+
+ai_conversations
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE
+  messages        jsonb NOT NULL DEFAULT '[]'
+  context_snapshot jsonb
+  created_at      timestamptz DEFAULT now()
+  updated_at      timestamptz DEFAULT now()
+
+subscriptions
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id         uuid REFERENCES users(id) ON DELETE CASCADE UNIQUE
+  tier            text NOT NULL
+  status          text CHECK (status IN ('active','cancelled','expired','trial','paused'))
+  platform        text CHECK (platform IN ('ios','android','web','esewa','khalti'))
+  external_id     text
+  trial_ends_at   timestamptz
+  current_period_start timestamptz
+  current_period_end   timestamptz
+  cancelled_at    timestamptz
+  created_at      timestamptz DEFAULT now()
+  updated_at      timestamptz DEFAULT now()
+
+promo_codes
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  code            text UNIQUE NOT NULL
+  discount_type   text CHECK (discount_type IN ('percent','fixed_npr','free_months'))
+  discount_value  numeric(8,2) NOT NULL
+  applicable_tier text[]
+  max_uses        integer
+  uses_count      integer DEFAULT 0
+  per_user_limit  integer DEFAULT 1
+  expires_at      timestamptz
+  created_by      uuid REFERENCES users(id)
+  is_active       boolean DEFAULT true
+  created_at      timestamptz DEFAULT now()
+
+audit_log
+  id              bigserial PRIMARY KEY
+  user_id         uuid REFERENCES users(id) ON DELETE SET NULL
+  action          text NOT NULL
+  table_name      text
+  record_id       uuid
+  old_values      jsonb
+  new_values      jsonb
+  ip_address      inet
+  user_agent      text
+  created_at      timestamptz DEFAULT now()
+
+## 4.2 Required indexes (never skip these)
+CREATE INDEX ON workout_sessions (user_id, started_at DESC);
+CREATE INDEX ON workout_sets (session_id);
+CREATE INDEX ON workout_sets (exercise_id, user_id);
+CREATE INDEX ON meal_logs (user_id, date DESC);
+CREATE INDEX ON run_sessions (user_id, started_at DESC);
+CREATE INDEX ON sleep_logs (user_id, date DESC);
+CREATE INDEX ON body_metrics (user_id, date DESC);
+CREATE INDEX ON personal_records (user_id, exercise_id);
+CREATE INDEX ON follows (follower_id);
+CREATE INDEX ON follows (following_id);
+CREATE INDEX ON messages (conversation_id, created_at DESC);
+CREATE INDEX ON food_items (barcode) WHERE barcode IS NOT NULL;
+CREATE INDEX ON food_items (is_nepali) WHERE is_nepali = true;
+CREATE INDEX ON food_items USING gin(to_tsvector('english', name));
+CREATE INDEX ON exercises USING gin(to_tsvector('english', name));
+
+## 4.3 RLS policy pattern (enforce on every table)
+-- Every table must have RLS enabled
+ALTER TABLE [table] ENABLE ROW LEVEL SECURITY;
+
+-- Standard user-owned data policy
+CREATE POLICY "users_own_data" ON [table]
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "users_insert_own" ON [table]
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "users_update_own" ON [table]
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- Public read policy (for activities marked is_public)
+CREATE POLICY "public_activities_readable" ON workout_sessions
+  FOR SELECT USING (is_public = true OR auth.uid() = user_id);
+
+
+# -----------------------------------------------------------------------------
+# SECTION 5: FOLDER STRUCTURE
+# -----------------------------------------------------------------------------
+
+fitnepal/
+  .cursorrules                   # this file
+  CLAUDE.md                      # session context for Claude.ai
+  package.json
+  tsconfig.json
+  lefthook.yml
+  .env.local                     # never committed -- listed in .gitignore
+
+  apps/
+    mobile/                      # React Native + Expo
+      app.json
+      app/                       # Expo Router (if used) OR src/
+      src/
+        screens/                 # one file per screen, named ScreenName.screen.tsx
+          home/
+            Home.screen.tsx
+            Home.types.ts
+          workout/
+            WorkoutList.screen.tsx
+            ActiveWorkout.screen.tsx
+            WorkoutComplete.screen.tsx
+          diet/
+            Diet.screen.tsx
+            FoodSearch.screen.tsx
+          run/
+            RunTracker.screen.tsx
+            RunHistory.screen.tsx
+          sleep/
+            Sleep.screen.tsx
+          body/
+            BodyMetrics.screen.tsx
+          ai/
+            AICoach.screen.tsx
+          social/
+            Feed.screen.tsx
+            Profile.screen.tsx
+            GroupDetail.screen.tsx
+          auth/
+            Login.screen.tsx
+            Register.screen.tsx
+            Onboarding.screen.tsx
+          settings/
+            Settings.screen.tsx
+            Subscription.screen.tsx
+
+        components/              # reusable UI -- never contain business logic
+          common/
+            Button.tsx
+            Card.tsx
+            Input.tsx
+            Skeleton.tsx
+            Avatar.tsx
+            Badge.tsx
+            ProgressRing.tsx
+            StatCard.tsx
+            Toast.tsx
+            EmptyState.tsx
+            ErrorBoundary.tsx
+          workout/
+            ExerciseCard.tsx
+            SetLogger.tsx
+            RestTimer.tsx
+            WorkoutSummaryCard.tsx
+          diet/
+            MacroBar.tsx
+            CalorieRing.tsx
+            FoodItem.tsx
+            MealSection.tsx
+          run/
+            LiveMap.tsx
+            RunStats.tsx
+            SplitRow.tsx
+          social/
+            ActivityCard.tsx
+            KudosButton.tsx
+            UserRow.tsx
+
+        services/                # all data fetching -- never in components
+          supabase.ts            # supabase client singleton
+          auth.service.ts
+          workout.service.ts
+          diet.service.ts
+          run.service.ts
+          sleep.service.ts
+          body.service.ts
+          ai.service.ts
+          social.service.ts
+          subscription.service.ts
+          health.service.ts      # HealthKit / Health Connect
+
+        stores/                  # zustand stores
+          auth.store.ts
+          workout.store.ts       # active workout session state
+          run.store.ts           # live run state
+          ui.store.ts            # modals, toasts, theme
+
+        hooks/                   # custom hooks wrapping TanStack Query
+          useWorkouts.ts
+          useDiet.ts
+          useRun.ts
+          useSleep.ts
+          useBodyMetrics.ts
+          useAICoach.ts
+          useSocial.ts
+          useSubscription.ts
+          useHealthSync.ts
+          useOfflineSync.ts
+
+        navigation/
+          RootNavigator.tsx
+          AuthNavigator.tsx
+          TabNavigator.tsx
+          WorkoutNavigator.tsx
+
+        constants/
+          theme.ts               # colors, fonts, spacing -- single source of truth
+          config.ts              # env vars, feature flags
+          queryKeys.ts           # TanStack Query key factory
+          endpoints.ts           # API endpoint constants
+
+        types/
+          database.types.ts      # generated by Supabase CLI (supabase gen types)
+          api.types.ts
+          navigation.types.ts
+          common.types.ts
+
+        utils/
+          formatters.ts          # date, number, duration formatting
+          validators.ts          # zod schemas
+          calculations.ts        # TDEE, BMI, pace, calorie burn
+          encryption.ts          # AES-256 for DM encryption
+          offline.ts             # offline queue manager
+          haptics.ts             # haptic feedback helpers
+
+        i18n/
+          en.json
+          ne.json                # Nepali translations
+          index.ts
+
+    web/                         # Next.js 15
+      app/
+        (auth)/
+        (dashboard)/
+        (marketing)/
+        api/
+          health/route.ts
+          webhooks/
+      components/
+      lib/
+      public/
+
+    desktop/                     # Tauri v2 (wraps web app)
+      src-tauri/
+        tauri.conf.json
+        Cargo.toml
+
+  packages/
+    shared-types/                # TypeScript types shared across all apps
+    shared-utils/                # Pure utility functions (no platform deps)
+    shared-validators/           # Zod schemas shared across apps
+
+  supabase/
+    migrations/                  # all DB migrations in order
+    seed.sql                     # development seed data
+    functions/                   # Edge Functions
+      ai-coach/                  # Claude API orchestration
+      health-sync/               # HealthKit / Health Connect webhook
+      payment-webhook/           # RevenueCat + eSewa + Khalti webhooks
+      send-notification/         # Expo push notification sender
+    config.toml
+
+  .github/
+    workflows/
+      ci.yml                     # lint, type-check, test on every PR
+      deploy-web.yml             # Vercel deploy on merge to main
+      deploy-mobile.yml          # EAS build + submit on version tag
+      deploy-desktop.yml         # Tauri build matrix on version tag
+      release.yml                # GitHub Release creation
+
+
+# -----------------------------------------------------------------------------
+# SECTION 6: CODE CONVENTIONS
+# -----------------------------------------------------------------------------
+
+## 6.1 TypeScript rules
+- strict: true in tsconfig -- no exceptions, no @ts-ignore without explanation
+- noImplicitAny: true
+- strictNullChecks: true
+- All props typed with interfaces (not type aliases) for components
+- All API responses typed -- never use `any`
+- Generated Supabase types from `supabase gen types typescript` -- never hand-write DB types
+- Zod schemas for all form validation and all external API responses
+- Generic return types: always `Promise<Result<T, AppError>>` for service functions
+- No enums -- use `as const` objects with typeof for type extraction
+
+## 6.2 Component conventions
+- Functional components only -- no class components
+- Component file exports: one default export (the component) + named exports for types
+- Props interface named ComponentNameProps
+- No inline styles -- all styles via StyleSheet.create() or theme constants
+- No hardcoded colors -- always from constants/theme.ts
+- No hardcoded strings -- always from i18n
+- Error boundary wrapper on every screen component
+- Loading state: skeleton screens, never ActivityIndicator spinners
+- Empty state: dedicated EmptyState component, never null render
+
+## 6.3 Service layer conventions
+- All Supabase queries in /services/ -- never inline in components or hooks
+- Service functions return typed results -- never throw, always return error objects
+- Standard service return type:
+  type ServiceResult<T> = { data: T; error: null } | { data: null; error: AppError }
+- Always check RLS -- assume user can only access their own data
+- Use Supabase pooled connection URL (not direct) for all client queries
+- Mutations: always include optimistic update logic via TanStack Query
+
+## 6.4 State management conventions
+- TanStack Query: all server data -- workouts, diet, runs, social, AI responses
+- Zustand: UI state + active session state (active workout, live run)
+- No Redux, no Context API for global state
+- Query keys: always from constants/queryKeys.ts factory -- never inline strings
+- Invalidation: always invalidate related queries after mutations
+- Stale time: 5 minutes for user data, 1 hour for library data (exercises, foods)
+- Offline: useMutation with onMutate for optimistic updates + rollback on error
+
+## 6.5 Async patterns
+- Always async/await -- no .then() chains
+- Always try/catch in service functions
+- Never let errors bubble uncaught to the UI
+- Network errors handled globally via TanStack Query onError
+- Supabase realtime subscriptions cleaned up in useEffect return function
+
+## 6.6 Naming conventions
+- Files: PascalCase for components, camelCase for everything else
+- Screens: NameScreen.tsx (e.g. HomeScreen.tsx, ActiveWorkoutScreen.tsx)
+- Services: name.service.ts (e.g. workout.service.ts)
+- Hooks: useFeatureName.ts (e.g. useWorkouts.ts)
+- Stores: name.store.ts (e.g. auth.store.ts)
+- Types: name.types.ts (e.g. workout.types.ts)
+- Constants: SCREAMING_SNAKE for values, camelCase for objects
+- Database columns: snake_case (matches PostgreSQL convention)
+- TypeScript interfaces: PascalCase, no I prefix
+- Zod schemas: camelCase with Schema suffix (e.g. loginSchema)
+
+## 6.7 Git conventions
+- Branch naming: feature/short-description, fix/issue-description, chore/task
+- Commit format: type(scope): description (conventional commits)
+  feat(workout): add rest timer with haptic feedback
+  fix(diet): correct calorie calculation for custom serving sizes
+  chore(deps): update expo-location to 17.0.1
+- PR title must match conventional commit format
+- No direct commits to main -- all changes via PR
+- Squash merge PRs (clean linear history)
+
+
+# -----------------------------------------------------------------------------
+# SECTION 7: DESIGN SYSTEM (enforce in all generated UI code)
+# -----------------------------------------------------------------------------
+
+## 7.1 Color tokens (from constants/theme.ts -- always import, never hardcode)
+Background:
+  BG_BASE:        '#0a0a0b'   // app background
+  BG_SURFACE:     '#111114'   // card backgrounds
+  BG_SURFACE_2:   '#18181d'   // input fields, inner cards
+  BG_SURFACE_3:   '#1f1f26'   // hover states, inactive
+
+Text:
+  TEXT_PRIMARY:   '#f0eff4'   // main text
+  TEXT_SECONDARY: '#8e8d9a'   // muted, descriptions
+  TEXT_TERTIARY:  '#4e4d5a'   // hints, placeholders, labels
+
+Accent (primary brand):
+  ACCENT:         '#c8f53a'   // CTAs, active states, success, streaks
+  ACCENT_DIM:     'rgba(200,245,58,0.12)'
+  ACCENT_2:       '#a8e020'   // hover state of accent
+
+Semantic:
+  RED:            '#ff4d6a'   // errors, danger, high HR zone
+  RED_DIM:        'rgba(255,77,106,0.12)'
+  ORANGE:         '#ff9500'   // timers, warnings, calories
+  ORANGE_DIM:     'rgba(255,149,0,0.12)'
+  BLUE:           '#4d9fff'   // info, GPS, water intake
+  BLUE_DIM:       'rgba(77,159,255,0.12)'
+  TEAL:           '#2dd9b0'   // health, sleep, recovery
+  TEAL_DIM:       'rgba(45,217,176,0.12)'
+  PURPLE:         '#b87bff'   // AI, premium, yoga
+  PURPLE_DIM:     'rgba(184,123,255,0.12)'
+
+Border:
+  BORDER:         'rgba(255,255,255,0.07)'   // default borders
+  BORDER_2:       'rgba(255,255,255,0.12)'   // emphasis borders
+
+## 7.2 Typography tokens
+FONT_DISPLAY:   'Syne'          // headings, numbers, brand moments
+FONT_BODY:      'DM Sans'       // all body text, labels, descriptions
+FONT_MONO:      'JetBrains Mono' // all data: stats, metrics, code, times
+
+Type scale:
+  DISPLAY_XL:   { fontFamily: FONT_DISPLAY, fontSize: 72, fontWeight: '800', letterSpacing: -2 }
+  DISPLAY_LG:   { fontFamily: FONT_DISPLAY, fontSize: 48, fontWeight: '800', letterSpacing: -1.5 }
+  DISPLAY_MD:   { fontFamily: FONT_DISPLAY, fontSize: 32, fontWeight: '700', letterSpacing: -1 }
+  DISPLAY_SM:   { fontFamily: FONT_DISPLAY, fontSize: 22, fontWeight: '700', letterSpacing: -0.5 }
+  HEADING:      { fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: '700' }
+  BODY_LG:      { fontFamily: FONT_BODY, fontSize: 16, fontWeight: '400', lineHeight: 26 }
+  BODY_MD:      { fontFamily: FONT_BODY, fontSize: 14, fontWeight: '400', lineHeight: 22 }
+  BODY_SM:      { fontFamily: FONT_BODY, fontSize: 12, fontWeight: '400', lineHeight: 18 }
+  LABEL:        { fontFamily: FONT_BODY, fontSize: 13, fontWeight: '500' }
+  CAPTION:      { fontFamily: FONT_BODY, fontSize: 11, fontWeight: '400', color: TEXT_SECONDARY }
+  DATA_LG:      { fontFamily: FONT_MONO, fontSize: 24, fontWeight: '500' }
+  DATA_MD:      { fontFamily: FONT_MONO, fontSize: 14, fontWeight: '400' }
+  DATA_SM:      { fontFamily: FONT_MONO, fontSize: 11, fontWeight: '400' }
+  EYEBROW:      { fontFamily: FONT_MONO, fontSize: 10, fontWeight: '500', letterSpacing: 0.1, textTransform: 'uppercase' }
+
+## 7.3 Spacing (8pt grid -- always multiples of 4 or 8)
+SPACE_1:   4
+SPACE_2:   8
+SPACE_3:   12
+SPACE_4:   16
+SPACE_5:   20    // standard horizontal screen padding
+SPACE_6:   24
+SPACE_8:   32
+SPACE_10:  40
+SPACE_12:  48
+
+## 7.4 Border radius
+RADIUS_SM:   10
+RADIUS_MD:   16
+RADIUS_LG:   22
+RADIUS_XL:   32
+RADIUS_FULL: 999  // pills, circular elements
+
+## 7.5 Component sizing
+Touch targets:    minimum 44px height (Apple HIG requirement)
+Primary CTA:      56px height, full width, RADIUS_FULL, ACCENT background
+Secondary button: 44px height, BORDER_2 border, transparent background
+Icon buttons:     44x44px minimum, circular (RADIUS_FULL)
+Bottom nav items: 64px height touch target
+Input fields:     48px height, RADIUS_MD, BG_SURFACE_2 background
+Cards:            RADIUS_LG, BG_SURFACE, BORDER border (0.5px or StyleSheet hairlineWidth)
+Screen padding:   horizontal 20px always (SPACE_5)
+
+## 7.6 UX enforcement rules (generated UI must follow these)
+- No ActivityIndicator spinners -- skeleton screens only during loading
+- Optimistic UI on all mutations -- update UI immediately, revert on error
+- Primary action always in bottom 40% of screen (reachable with thumb)
+- Empty states: always render EmptyState component, never return null
+- Error states: always render inline error with retry action
+- Offline indicator: subtle banner at top when no network, never block the UI
+- All text in i18n -- never hardcode English strings in JSX
+- Progress photos default to private -- never auto-share
+- AI responses always stream (stream: true on Claude API) -- never wait for full response
+- Haptic feedback on: button press (light), PR achievement (heavy), rest timer done (medium)
+
+
+# -----------------------------------------------------------------------------
+# SECTION 8: AI COACH INTEGRATION
+# -----------------------------------------------------------------------------
+
+## 8.1 Claude API configuration
+Model:           claude-sonnet-4-5 (production), claude-haiku-4-5-20251001 (fast/cheap ops)
+Max tokens:      1024 (chat responses), 2048 (weekly analysis)
+Temperature:     0.7 (conversational), 0.3 (analysis and meal plans)
+Stream:          true -- always stream responses to UI
+Timeout:         30 seconds -- abort and show error after this
+
+## 8.2 System prompt structure (always build this way)
+You are Kai, a professional AI fitness and nutrition coach inside FitNepal.
+You speak in the user's preferred language (${user.language}).
+You are direct, evidence-based, and motivating without being toxic.
+
+User profile:
+  Name: ${user.display_name}
+  Goal: ${user.goal}
+  Fitness level: ${user.fitness_level}
+  Age: ${calculateAge(user.date_of_birth)}
+  Current weight: ${latestMetric.weight_kg}kg
+  Target: ${user.goal_weight_kg}kg
+
+Last 7 days summary:
+  Workouts: ${workoutCount} of ${targetWorkouts} planned
+  Avg daily calories: ${avgCalories} (target: ${tdee})
+  Avg protein: ${avgProtein}g (target: ${proteinTarget}g)
+  Avg sleep: ${avgSleep}h
+  Total km run: ${totalKm}km
+  Current streak: ${streak} days
+
+Constraints:
+  Never recommend calories below 1200 kcal/day.
+  Never recommend more than 1kg/week weight loss.
+  Always recommend consulting a doctor for injuries.
+  Suggest Nepali foods when relevant (dal bhat, momo, chiura, gundruk, etc).
+
+## 8.3 Caching strategy for AI responses
+Key format:      ai:${userId}:${sha256(systemPrompt + userMessage)}
+TTL:             86400 seconds (24 hours)
+Skip cache when: user explicitly asks to refresh, weekly report generation
+Cache on:        Upstash Redis via @upstash/redis SDK
+
+## 8.4 Rate limiting
+Free tier:       5 AI requests per day per user
+Pro tier:        50 AI requests per day per user
+Elite tier:      unlimited
+Implementation:  Upstash Redis sliding window counter, key: ratelimit:ai:${userId}
+
+
+# -----------------------------------------------------------------------------
+# SECTION 9: NEPAL-SPECIFIC REQUIREMENTS
+# -----------------------------------------------------------------------------
+
+## 9.1 Localization
+Default language:     Nepali (ne) -- set during onboarding, stored in users.language
+Fallback language:    English (en)
+i18n library:         react-i18next
+Translation files:    /src/i18n/ne.json and en.json
+Currency display:     NPR (Nepali Rupee) -- format: NPR 499 (no comma for thousands in NPR)
+Date format:          DD/MM/YYYY (Nepal standard)
+Time format:          12-hour with AM/PM
+Timezone:             Asia/Kathmandu (UTC+5:45) -- note: not a standard offset
+Week start:           Sunday
+
+## 9.2 Nepali food database
+Priority foods to include in seed data (with accurate nutrition per 100g):
+  Dal bhat (with mixed sabzi and achar)
+  Momos (buff, chicken, veg -- steamed and fried variants)
+  Sel roti
+  Chiura (beaten rice)
+  Gundruk
+  Aloo tama (potato and bamboo shoot curry)
+  Chatamari
+  Newari samay baji platter
+  Yomari
+  Thukpa (Tibetan noodle soup variant)
+  Kwati (mixed bean soup)
+  Saag (mustard greens)
+  Dhindo
+
+## 9.3 Payment flow (Nepal)
+eSewa integration:
+  Endpoint:   https://epay.esewa.com.np/api/epay/main/v2/form (production)
+  Test:       https://rc-epay.esewa.com.np/api/epay/main/v2/form
+  Flow:       POST form -> eSewa hosted page -> callback to /payment/esewa/callback
+  Verify:     GET https://epay.esewa.com.np/api/epay/transaction/status/
+  Secret:     ESEWA_SECRET env var -- HMAC-SHA256 signature required
+
+Khalti integration:
+  Endpoint:   https://khalti.com/api/v2/epayment/initiate/ (production)
+  Flow:       POST initiate -> redirect to Khalti -> callback to /payment/khalti/callback
+  Verify:     POST https://khalti.com/api/v2/epayment/lookup/
+  Secret:     KHALTI_SECRET env var
+
+## 9.4 GPS and mapping context
+Kathmandu center coordinates:  27.7172, 85.3240
+Pokhara center coordinates:    28.2096, 83.9856
+Popular running routes to seed: Ratna Park loop, Tundikhel, Phewa Lake perimeter
+Elevation data: important for Nepal (Kathmandu valley at 1400m, trekking routes)
+Map provider: Google Maps API (react-native-maps default on Android)
+              Apple Maps (react-native-maps default on iOS -- no API key needed)
+
+
+# -----------------------------------------------------------------------------
+# SECTION 10: BUILD STATUS (update this section daily)
+# -----------------------------------------------------------------------------
+
+## 10.1 What is built and working
+[Update daily -- be specific, be honest]
+
+## 10.2 What is in progress today
+[Update every morning -- one feature only]
+
+## 10.3 Known issues and bugs
+[List all known issues -- helps AI avoid suggesting broken code paths]
+
+## 10.4 What is explicitly NOT built yet (do not reference in generated code)
+- Wearable integrations (HealthKit, Health Connect) -- planned v2
+- Video consultation (Daily.co) -- planned v3
+- Gym partner portal -- planned v3
+- Social groups -- planned v2
+- Trainer marketplace -- planned v3
+- Garmin / Fitbit direct APIs -- planned v3
+- Desktop app (Tauri) -- planned v6 months post-MVP
+
+
+# -----------------------------------------------------------------------------
+# END OF .cursorrules
+# Update Section 10 daily. Keep everything else stable and accurate.
+# =============================================================================

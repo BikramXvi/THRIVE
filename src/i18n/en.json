@@ -1,0 +1,104 @@
+{
+    "common": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "done": "Done",
+      "next": "Next",
+      "back": "Back",
+      "loading": "Loading...",
+      "error": "Something went wrong",
+      "retry": "Try again",
+      "empty": "Nothing here yet"
+    },
+    "auth": {
+      "login": "Log in",
+      "signup": "Create account",
+      "logout": "Log out",
+      "email": "Email",
+      "password": "Password",
+      "forgot_password": "Forgot password?",
+      "no_account": "Don't have an account?",
+      "have_account": "Already have an account?"
+    },
+    "home": {
+      "greeting_morning": "Good morning,",
+      "greeting_afternoon": "Good afternoon,",
+      "greeting_evening": "Good evening,",
+      "todays_rings": "Today's rings",
+      "quick_actions": "Quick actions",
+      "todays_plan": "Today's plan",
+      "streak_days": "day streak"
+    },
+    "workout": {
+      "start": "Start workout",
+      "log_set": "Log set",
+      "rest_timer": "Rest timer",
+      "complete": "Complete workout",
+      "weight_kg": "Weight (kg)",
+      "reps": "Reps",
+      "set": "Set",
+      "sets_completed": "sets completed",
+      "next_exercise": "Next exercise",
+      "today_sets": "Today's sets"
+    },
+    "diet": {
+      "todays_nutrition": "Today's nutrition",
+      "calories_remaining": "kcal remaining",
+      "add_food": "Add food",
+      "breakfast": "Breakfast",
+      "lunch": "Lunch",
+      "dinner": "Dinner",
+      "snack": "Snack",
+      "protein": "Protein",
+      "carbs": "Carbs",
+      "fat": "Fat",
+      "water": "Water"
+    },
+    "run": {
+      "start_run": "Start run",
+      "pause": "Pause",
+      "resume": "Resume",
+      "end_run": "End run",
+      "distance": "Distance",
+      "pace": "Pace",
+      "duration": "Duration",
+      "calories": "Calories",
+      "heart_rate": "Heart rate",
+      "km_splits": "Km splits"
+    },
+    "sleep": {
+      "log_sleep": "Log sleep",
+      "bedtime": "Bedtime",
+      "wake_time": "Wake time",
+      "duration": "Duration",
+      "quality": "Quality",
+      "score": "Sleep score"
+    },
+    "ai": {
+      "coach_name": "Kai",
+      "placeholder": "Ask Kai anything...",
+      "thinking": "Kai is thinking...",
+      "quick_analyse": "Analyse my week",
+      "quick_meal": "Make me a meal plan",
+      "quick_plateau": "Why am I plateauing?",
+      "quick_workout": "Today's workout"
+    },
+    "profile": {
+      "workouts": "Workouts",
+      "km_run": "km run",
+      "streak": "Streak",
+      "badges": "Badges earned",
+      "recent_activity": "Recent activity"
+    },
+    "onboarding": {
+      "step": "Step {{current}} of {{total}}",
+      "goal_title": "What's your main goal?",
+      "goal_subtitle": "This helps Kai build your perfect plan from day one.",
+      "goal_lose_weight": "Lose weight",
+      "goal_build_muscle": "Build muscle",
+      "goal_run_faster": "Run faster / further",
+      "goal_flexibility": "Improve flexibility",
+      "goal_health": "General health",
+      "continue": "Continue"
+    }
+  }
