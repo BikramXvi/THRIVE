@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+import { exportService } from '../../services/export.service';
+import type { UserContext as KaiContext } from '../../services/export.service';
 import {
   View,
   Text,
@@ -22,12 +24,12 @@ interface Message {
   time:    string;
 }
 
-interface UserContext {
-  name:      string;
-  goal:      string;
-  level:     string;
-  weight:    string;
-}
+// interface UserContext {
+//   name:      string;
+//   goal:      string;
+//   level:     string;
+//   weight:    string;
+// }
 
 const QUICK_PROMPTS: {
   id:    string;
@@ -63,8 +65,8 @@ function formatTime(): string {
   });
 }
 
-function buildSystemPrompt(ctx: UserContext): string {
-  return `You are Kai, a professional fitness and nutrition coach inside FitNepal, a fitness app built for Nepal.
+function buildSystemPrompt(ctx: { name: string; goal: string; level: string; weight: string }): string {
+    return `You are Kai, a professional fitness and nutrition coach inside FitNepal, a fitness app built for Nepal.
 
 You are speaking with ${ctx.name}.
 Goal: ${ctx.goal}
@@ -166,16 +168,35 @@ function getPlaceholderResponse(userMessage: string): string {
 }
 
 export function AICoachScreen() {
+  const [userContext, setUserContext] = useState<KaiContext | null>(null);
+  const [contextLoading, setContextLoading] = useState(true);
   const [messages,  setMessages]  = useState<Message[]>([]);
   const [input,     setInput]     = useState('');
   const [loading,   setLoading]   = useState(false);
-  const [userCtx,   setUserCtx]   = useState<UserContext>({
+  const [userCtx, setUserCtx] = useState({
     name:   'Athlete',
     goal:   'Build muscle',
     level:  'Intermediate',
     weight: '74kg',
   });
   const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    loadContext();
+  }, []);
+  
+  async function loadContext() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    try {
+      const context = await exportService.getUserContext(user.id);
+      setUserContext(context);
+    } catch (err) {
+      console.error('Could not load user context:', err);
+    } finally {
+      setContextLoading(false);
+    }
+  }
 
   useEffect(() => {
     loadUserAndGreet();
@@ -190,73 +211,57 @@ export function AICoachScreen() {
   async function loadUserAndGreet() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
-    const { data } = await supabase
-    .from('users')
-    .select('display_name, username, goal, fitness_level, weight_kg')
-    .eq('id', user.id)
-    .single();
   
-  const profile = data as {
-    display_name:  string | null;
-    username:      string;
-    goal:          string | null;
-    fitness_level: string | null;
-    weight_kg:     number | null;
-  } | null;
+    const context = await exportService.getUserContext(user.id);
+    setUserContext(context);
   
-  const ctx: UserContext = {
-    name:   profile?.display_name?.split(' ')[0] ?? profile?.username ?? 'Athlete',
-    goal:   GOAL_LABELS[profile?.goal ?? '']     ?? 'Build muscle',
-    level:  LEVEL_LABELS[profile?.fitness_level ?? ''] ?? 'Intermediate',
-    weight: profile?.weight_kg ? `${profile.weight_kg}kg` : '74kg',
-  };
-
-    setUserCtx(ctx);
-
     const greeting: Message = {
       id:      'greeting',
       role:    'assistant',
-      content: `Namaste, ${ctx.name}! I am Kai, your personal fitness coach.\n\nI have loaded your recent data. You have completed 4 workouts this week, averaged 1,847 kcal daily, and maintained a 21-day streak.\n\nYour protein is running about 48g below your daily target. That is the main thing holding back your progress right now.\n\nWhat would you like to work on?`,
+      content: `Namaste, ${context.profile.name}! I am Kai, your personal fitness coach.\n\nI have loaded your recent data:\n- Workouts this week: ${context.last7Days.workouts.length}\n- Avg calories: ${context.last7Days.avgCalories} kcal\n- Avg protein: ${context.last7Days.avgProtein}g\n- Avg sleep: ${context.last7Days.avgSleep}h\n- km run: ${context.last7Days.totalKmRun}km\n\nWhat would you like to work on?`,
       time:    formatTime(),
     };
-
+  
     setMessages([greeting]);
+    setContextLoading(false);
   }
-
+  
   async function sendMessage(text?: string) {
     const content = (text ?? input).trim();
     if (!content || loading) return;
-
+  
     setInput('');
-
+  
     const userMsg: Message = {
       id:      `u-${Date.now()}`,
       role:    'user',
       content,
       time:    formatTime(),
     };
-
+  
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setLoading(true);
-
+  
     try {
-      const systemPrompt = buildSystemPrompt(userCtx);
-      const apiMessages  = updatedMessages.map((m) => ({
+      const systemPrompt = userContext
+        ? exportService.buildKaiPrompt(userContext)
+        : buildSystemPrompt(userCtx);
+  
+      const apiMessages = updatedMessages.map((m) => ({
         role:    m.role,
         content: m.content,
       }));
-
+  
       const responseText = await callClaudeAPI(apiMessages, systemPrompt);
-
+  
       const assistantMsg: Message = {
         id:      `a-${Date.now()}`,
         role:    'assistant',
         content: responseText,
         time:    formatTime(),
       };
-
+  
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
       console.error('Send message error:', err);
