@@ -8,11 +8,18 @@ import {
   TouchableOpacity,
   StyleSheet,
   Pressable,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
+import { supabase } from '../../lib/supabase';
+import { useUIStore } from '../../stores/ui.store';
 import { Colors, Spacing, Radius } from '../../constants/theme';
+import { useSafeTop } from '../../hooks/useSafeTop';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback } from 'react';
 
-type RunState = 'idle' | 'running' | 'paused';
+type RunState    = 'idle' | 'running' | 'paused';
 type ActivityType = 'run' | 'walk' | 'hike' | 'cycle';
 
 interface Split {
@@ -21,15 +28,10 @@ interface Split {
   duration: number;
 }
 
-interface RunRecord {
-  id:       string;
-  date:     string;
-  type:     ActivityType;
-  distance: number;
-  duration: number;
-  pace:     string;
-  calories: number;
-  elevation: number;
+interface Coordinate {
+  latitude:  number;
+  longitude: number;
+  altitude:  number | null;
 }
 
 const ACTIVITY_TYPES: {
@@ -38,31 +40,20 @@ const ACTIVITY_TYPES: {
   icon:  keyof typeof Ionicons.glyphMap;
   color: string;
 }[] = [
-  { id: 'run',   label: 'Run',   icon: 'walk-outline',    color: Colors.ACCENT },
-  { id: 'walk',  label: 'Walk',  icon: 'footsteps-outline', color: Colors.BLUE  },
-  { id: 'hike',  label: 'Hike',  icon: 'trail-sign-outline', color: Colors.TEAL },
-  { id: 'cycle', label: 'Cycle', icon: 'bicycle-outline',  color: Colors.ORANGE},
+  { id: 'run',   label: 'Run',   icon: 'walk-outline',       color: Colors.ACCENT },
+  { id: 'walk',  label: 'Walk',  icon: 'footsteps-outline',  color: Colors.BLUE   },
+  { id: 'hike',  label: 'Hike',  icon: 'trail-sign-outline', color: Colors.TEAL   },
+  { id: 'cycle', label: 'Cycle', icon: 'bicycle-outline',    color: Colors.ORANGE },
 ];
-
-const RUN_HISTORY: RunRecord[] = [
-  { id: 'r1', date: 'Today',     type: 'run',   distance: 0,   duration: 0,    pace: '--',    calories: 0,   elevation: 0   },
-  { id: 'r2', date: 'Yesterday', type: 'run',   distance: 6.2, duration: 1824, pace: '4:54',  calories: 412, elevation: 48  },
-  { id: 'r3', date: 'Mon',       type: 'walk',  distance: 3.1, duration: 2280, pace: '12:15', calories: 180, elevation: 12  },
-  { id: 'r4', date: 'Sat',       type: 'run',   distance: 10,  duration: 3060, pace: '5:06',  calories: 680, elevation: 95  },
-  { id: 'r5', date: 'Fri',       type: 'hike',  distance: 8.4, duration: 7200, pace: '--',    calories: 820, elevation: 540 },
-  { id: 'r6', date: 'Thu',       type: 'run',   distance: 5,   duration: 1500, pace: '5:00',  calories: 340, elevation: 32  },
-];
-
-const WEEK_KM = [0, 6.2, 3.1, 0, 10, 8.4, 5];
-const WEEK_DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const WEEK_MAX = Math.max(...WEEK_KM);
 
 const PERSONAL_BESTS = [
-  { label: 'Fastest 1K',  value: '4:12', icon: 'flash-outline'    as keyof typeof Ionicons.glyphMap, color: Colors.ACCENT },
-  { label: 'Fastest 5K',  value: '24:38', icon: 'trophy-outline'  as keyof typeof Ionicons.glyphMap, color: Colors.BLUE   },
-  { label: 'Longest run', value: '21.1K', icon: 'map-outline'     as keyof typeof Ionicons.glyphMap, color: Colors.TEAL   },
+  { label: 'Fastest 1K',  value: '4:12',  icon: 'flash-outline'       as keyof typeof Ionicons.glyphMap, color: Colors.ACCENT },
+  { label: 'Fastest 5K',  value: '24:38', icon: 'trophy-outline'      as keyof typeof Ionicons.glyphMap, color: Colors.BLUE   },
+  { label: 'Longest run', value: '21.1K', icon: 'map-outline'         as keyof typeof Ionicons.glyphMap, color: Colors.TEAL   },
   { label: 'Best pace',   value: '4:05',  icon: 'speedometer-outline' as keyof typeof Ionicons.glyphMap, color: Colors.ORANGE },
 ];
+
+const WEEK_DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -73,43 +64,82 @@ function formatTime(seconds: number): string {
 }
 
 function formatPace(distanceKm: number, seconds: number): string {
-  if (distanceKm === 0) return '--:--';
+  if (distanceKm < 0.01) return '--:--';
   const secsPerKm = seconds / distanceKm;
   const m = Math.floor(secsPerKm / 60);
   const s = Math.round(secsPerKm % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function formatDistance(km: number): string {
-  if (km < 1) return `${Math.round(km * 1000)}m`;
-  return `${km.toFixed(2)}km`;
+function haversineDistance(a: Coordinate, b: Coordinate): number {
+  const R    = 6371000; // meters
+  const lat1 = (a.latitude  * Math.PI) / 180;
+  const lat2 = (b.latitude  * Math.PI) / 180;
+  const dLat = ((b.latitude  - a.latitude)  * Math.PI) / 180;
+  const dLon = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const x    = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+               Math.cos(lat1) * Math.cos(lat2) *
+               Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
 export function RunScreen() {
+  const safeTop = useSafeTop();
+
+  // Data state
   const [userId,      setUserId]      = useState<string | null>(null);
   const [runHistory,  setRunHistory]  = useState<RunSessionRow[]>([]);
   const [weekKm,      setWeekKm]      = useState([0,0,0,0,0,0,0]);
   const [loadingHist, setLoadingHist] = useState(true);
-  // existing state...
+
+  // Run state
   const [runState,      setRunState]      = useState<RunState>('idle');
   const [activityType,  setActivityType]  = useState<ActivityType>('run');
   const [elapsedSecs,   setElapsedSecs]   = useState(0);
-  const [distanceKm,    setDistanceKm]    = useState(0);
+  const [distanceM,     setDistanceM]     = useState(0);
   const [splits,        setSplits]        = useState<Split[]>([]);
-  const [lastSplitKm,   setLastSplitKm]   = useState(0);
   const [calories,      setCalories]      = useState(0);
-  const [showHistory,   setShowHistory]   = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [elevationGain, setElevationGain] = useState(0);
+  const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
+  const [locationError,   setLocationError]   = useState<string | null>(null);
+  const [gpsReady,        setGpsReady]        = useState(false);
 
+  const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const locationRef      = useRef<Location.LocationSubscription | null>(null);
+  const lastLocationRef  = useRef<Coordinate | null>(null);
+  const lastSplitMRef    = useRef(0);
+  const routeRef         = useRef<Coordinate[]>([]);
+  const startTimeRef     = useRef<string>('');
+
+  // Load data on focus
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
+
+
+
+  async function loadData() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    setUserId(user.id);
+
+    const [histRes, weekRes] = await Promise.all([
+      runService.getSessions(user.id, 10),
+      runService.getWeeklyKm(user.id),
+    ]);
+
+    if (histRes.data)  setRunHistory(histRes.data);
+    if (weekRes.data)  setWeekKm(weekRes.data);
+    setLoadingHist(false);
+  }
+
+  // Timer
   useEffect(() => {
     if (runState === 'running') {
       intervalRef.current = setInterval(() => {
         setElapsedSecs((s) => s + 1);
-        setDistanceKm((d) => {
-          const newD = d + 0.0014;
-          setCalories(Math.round(newD * 65));
-          return newD;
-        });
       }, 1000);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -119,53 +149,204 @@ export function RunScreen() {
     };
   }, [runState]);
 
-  useEffect(() => {
-    const nextSplitKm = Math.floor(distanceKm) + 1;
-    if (distanceKm >= lastSplitKm + 1 && distanceKm > 0) {
-      const splitKm = Math.floor(distanceKm);
-      setSplits((prev) => [
-        ...prev,
-        {
-          km:       splitKm,
-          pace:     formatPace(1, elapsedSecs - (prev.length > 0 ? prev.reduce((s, p) => s + p.duration, 0) : 0)),
-          duration: elapsedSecs,
-        },
-      ]);
-      setLastSplitKm(distanceKm);
+  async function requestLocationPermission(): Promise<boolean> {
+    if (Platform.OS === 'web') {
+      // Web uses browser geolocation
+      return new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const coord: Coordinate = {
+              latitude:  pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              altitude:  pos.coords.altitude,
+            };
+            setCurrentLocation(coord);
+            lastLocationRef.current = coord;
+            setGpsReady(true);
+            resolve(true);
+          },
+          (err) => {
+            setLocationError('Location access denied. Enable location in browser settings.');
+            resolve(false);
+          },
+          { enableHighAccuracy: true }
+        );
+      });
     }
-  }, [distanceKm]);
 
-  function startRun() {
-    setRunState('running');
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setLocationError('Location permission denied. Enable it in Settings.');
+      return false;
+    }
+    return true;
+  }
+
+  async function startLocationTracking() {
+    if (Platform.OS === 'web') {
+      // Web geolocation watchPosition
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const coord: Coordinate = {
+            latitude:  pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            altitude:  pos.coords.altitude,
+          };
+          handleLocationUpdate(coord);
+        },
+        (err) => console.error('GPS error:', err),
+        { enableHighAccuracy: true, maximumAge: 0 }
+      );
+      // Store watchId for cleanup
+      (locationRef as any).current = { remove: () => navigator.geolocation.clearWatch(watchId) };
+      return;
+    }
+
+    const subscription = await Location.watchPositionAsync(
+      {
+        accuracy:          Location.Accuracy.BestForNavigation,
+        timeInterval:      1000,
+        distanceInterval:  5,
+      },
+      (loc) => {
+        const coord: Coordinate = {
+          latitude:  loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          altitude:  loc.coords.altitude,
+        };
+        handleLocationUpdate(coord);
+      }
+    );
+    locationRef.current = subscription;
+  }
+
+  function handleLocationUpdate(coord: Coordinate) {
+    setCurrentLocation(coord);
+    routeRef.current.push(coord);
+
+    if (lastLocationRef.current) {
+      const dist = haversineDistance(lastLocationRef.current, coord);
+
+      // Filter GPS noise -- ignore jumps over 50m in 1 second
+      if (dist < 50) {
+        setDistanceM((prev) => {
+          const newDist = prev + dist;
+          setCalories(Math.round((newDist / 1000) * 65));
+
+          // Check for splits
+          const newKm = Math.floor(newDist / 1000);
+          const lastKm = Math.floor(lastSplitMRef.current / 1000);
+          if (newKm > lastKm && newKm > 0) {
+            setElapsedSecs((secs) => {
+              setSplits((prev) => [
+                ...prev,
+                {
+                  km:       newKm,
+                  pace:     formatPace(newKm, secs),
+                  duration: secs,
+                },
+              ]);
+              return secs;
+            });
+            lastSplitMRef.current = newDist;
+          }
+
+          return newDist;
+        });
+
+        // Elevation gain
+        if (coord.altitude && lastLocationRef.current.altitude) {
+          const elevDiff = coord.altitude - lastLocationRef.current.altitude;
+          if (elevDiff > 0) {
+            setElevationGain((prev) => prev + elevDiff);
+          }
+        }
+      }
+    }
+
+    lastLocationRef.current = coord;
+  }
+
+  function stopLocationTracking() {
+    if (locationRef.current) {
+      locationRef.current.remove();
+      locationRef.current = null;
+    }
+  }
+
+  async function startRun() {
+    setLocationError(null);
+    const granted = await requestLocationPermission();
+    if (!granted) return;
+
+    startTimeRef.current = new Date().toISOString();
     setElapsedSecs(0);
-    setDistanceKm(0);
+    setDistanceM(0);
     setSplits([]);
-    setLastSplitKm(0);
     setCalories(0);
+    setElevationGain(0);
+    routeRef.current = [];
+    lastLocationRef.current = null;
+    lastSplitMRef.current = 0;
+
+    await startLocationTracking();
+    setRunState('running');
   }
 
   function pauseRun() {
     setRunState('paused');
+    stopLocationTracking();
   }
 
-  function resumeRun() {
+  async function resumeRun() {
+    await startLocationTracking();
     setRunState('running');
   }
 
-  function endRun() {
+  async function endRun() {
+    stopLocationTracking();
     setRunState('idle');
+
+    if (distanceM > 50 && userId) {
+      const avgPace = distanceM > 0
+        ? Math.round(elapsedSecs / (distanceM / 1000))
+        : null;
+
+      const { error } = await runService.saveSession({
+        userId,
+        activityType,
+        distanceM:       Math.round(distanceM),
+        durationSeconds: elapsedSecs,
+        avgPaceSpm:      avgPace,
+        caloriesBurned:  calories,
+        splits,
+      });
+
+      if (error) {
+        useUIStore.getState().showToast('Could not save run', 'error');
+      } else {
+        useUIStore.getState().showToast(
+          `${activityType.charAt(0).toUpperCase() + activityType.slice(1)} saved! ${(distanceM / 1000).toFixed(2)}km`,
+          'success'
+        );
+        loadData();
+      }
+    }
   }
 
+  const distanceKm      = distanceM / 1000;
+  const pace            = formatPace(distanceKm, elapsedSecs);
+  const totalWeekKm     = weekKm.reduce((s: number, k) => s + k, 0);
+  const weekMax         = Math.max(...weekKm, 1);
   const currentActivity = ACTIVITY_TYPES.find((a) => a.id === activityType)!;
-  const pace = formatPace(distanceKm, elapsedSecs);
-  const totalWeekKm = WEEK_KM.reduce((s, k) => s + k, 0);
 
+  // ── Active run view ──────────────────────────────────────────────────────────
   if (runState !== 'idle') {
     return (
-      <View style={styles.root}>
+      <ScrollView style={styles.root}>
 
-        {/* Live tracker header */}
-        <View style={styles.liveHeader}>
+        {/* Header */}
+        <View style={[styles.liveHeader, { paddingTop: safeTop }]}>
           <View style={styles.liveHeaderLeft}>
             <View style={[styles.liveDot, runState === 'running' && styles.liveDotActive]} />
             <Text style={styles.liveLabel}>
@@ -176,21 +357,70 @@ export function RunScreen() {
             <Text style={styles.endBtnText}>End</Text>
           </TouchableOpacity>
         </View>
+{/* Map area */}
+{/* Map area */}
+<View style={styles.mapArea}>
+  {/* Dark grid background */}
+  <View style={styles.mapGridBg} />
 
-        {/* Map placeholder */}
-        <View style={styles.mapArea}>
-          <View style={styles.mapGrid} />
-          <View style={styles.mapContent}>
-            <View style={styles.mapRoute}>
-              <View style={styles.mapRouteLine} />
-              <View style={styles.mapDot} />
-            </View>
-            <View style={styles.mapLocationBadge}>
-              <Ionicons name="location" size={12} color={Colors.ACCENT} />
-              <Text style={styles.mapLocationText}>Kathmandu</Text>
-            </View>
-          </View>
-        </View>
+  {/* GPS status */}
+  <View style={styles.mapTopBadge}>
+    <View style={[styles.gpsStatusDot, { backgroundColor: currentLocation ? Colors.ACCENT : Colors.ORANGE }]} />
+    <Text style={styles.gpsStatusText}>
+      {currentLocation
+        ? `GPS · ${currentLocation.latitude.toFixed(4)}, ${currentLocation.longitude.toFixed(4)}`
+        : 'Acquiring GPS...'
+      }
+    </Text>
+  </View>
+
+  {/* Route visualization */}
+  <View style={styles.mapCenter}>
+    {routeRef.current.length > 1 ? (
+      <View style={styles.routeContainer}>
+        {routeRef.current.slice(-50).map((coord, i) => {
+          const arr   = routeRef.current.slice(-50);
+          const first = arr[0];
+          const last  = arr[arr.length - 1];
+          const latRange = Math.max(Math.abs(last.latitude  - first.latitude),  0.0001);
+          const lonRange = Math.max(Math.abs(last.longitude - first.longitude), 0.0001);
+          const x = ((coord.longitude - first.longitude) / lonRange) * 200 + 100;
+          const y = ((coord.latitude  - first.latitude)  / latRange) * 100 + 50;
+          const isCurrent = i === arr.length - 1;
+          return (
+            <View
+              key={i}
+              style={[
+                styles.routePoint,
+                {
+                  left:   x,
+                  top:    y,
+                  width:  isCurrent ? 12 : 4,
+                  height: isCurrent ? 12 : 4,
+                  borderRadius: isCurrent ? 6 : 2,
+                  backgroundColor: isCurrent ? Colors.ACCENT : Colors.ACCENT + '60',
+                  shadowColor:     isCurrent ? Colors.ACCENT : 'transparent',
+                  shadowRadius:    isCurrent ? 8 : 0,
+                  shadowOpacity:   isCurrent ? 1 : 0,
+                },
+              ]}
+            />
+          );
+        })}
+      </View>
+    ) : (
+      <View style={styles.mapPlaceholder}>
+        <Ionicons name="map-outline" size={36} color={Colors.TEXT_TERTIARY} style={{ opacity: 0.3 }} />
+        <Text style={styles.mapPlaceholderText}>
+          {currentLocation ? 'Start moving to see your route' : 'Waiting for GPS...'}
+        </Text>
+        <Text style={styles.mapPlaceholderSub}>
+          Full map on mobile app
+        </Text>
+      </View>
+    )}
+  </View>
+</View>
 
         {/* Live stats */}
         <View style={styles.liveStats}>
@@ -215,6 +445,13 @@ export function RunScreen() {
             <View style={styles.liveStat}>
               <Text style={[styles.liveStatValue, { color: Colors.ORANGE }]}>{calories}</Text>
               <Text style={styles.liveStatLabel}>kcal</Text>
+            </View>
+            <View style={styles.liveStatSep} />
+            <View style={styles.liveStat}>
+              <Text style={[styles.liveStatValue, { color: Colors.TEAL }]}>
+                {Math.round(elevationGain)}m
+              </Text>
+              <Text style={styles.liveStatLabel}>Elevation</Text>
             </View>
           </View>
         </View>
@@ -252,19 +489,20 @@ export function RunScreen() {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity style={styles.controlSecondary}>
-            <Ionicons name="musical-notes-outline" size={20} color={Colors.TEXT_SECONDARY} />
+          <TouchableOpacity style={styles.controlSecondary} onPress={endRun}>
+            <Ionicons name="stop-outline" size={20} color={Colors.RED} />
           </TouchableOpacity>
         </View>
 
-      </View>
+      </ScrollView>
     );
   }
 
+  // ── Idle view ────────────────────────────────────────────────────────────────
   return (
     <ScrollView
       style={styles.root}
-      contentContainerStyle={styles.scroll}
+      contentContainerStyle={[styles.scroll, { paddingTop: safeTop }]}
       showsVerticalScrollIndicator={false}
     >
       {/* Header */}
@@ -273,14 +511,15 @@ export function RunScreen() {
           <Text style={styles.eyebrow}>Ready to move?</Text>
           <Text style={styles.title}>Run</Text>
         </View>
-        <TouchableOpacity
-          style={styles.historyBtn}
-          onPress={() => setShowHistory((s) => !s)}
-        >
-          <Ionicons name="time-outline" size={16} color={Colors.TEXT_SECONDARY} />
-          <Text style={styles.historyBtnText}>History</Text>
-        </TouchableOpacity>
       </View>
+
+      {/* Location error */}
+      {locationError && (
+        <View style={styles.locationError}>
+          <Ionicons name="warning-outline" size={14} color={Colors.ORANGE} />
+          <Text style={styles.locationErrorText}>{locationError}</Text>
+        </View>
+      )}
 
       {/* Activity type selector */}
       <View style={styles.activityRow}>
@@ -320,7 +559,7 @@ export function RunScreen() {
             <Ionicons name="play" size={32} color={currentActivity.color} />
           </View>
           <Text style={styles.startRunText}>Start {currentActivity.label}</Text>
-          <Text style={styles.startRunSub}>GPS · pace · splits · map</Text>
+          <Text style={styles.startRunSub}>GPS · pace · splits · elevation</Text>
         </View>
       </TouchableOpacity>
 
@@ -334,11 +573,10 @@ export function RunScreen() {
           </Text>
         </View>
 
-        {/* Bar chart */}
         <View style={styles.weekChart}>
-          {WEEK_KM.map((km, i) => {
-            const isToday = i === new Date().getDay();
-            const heightPct = WEEK_MAX > 0 ? km / WEEK_MAX : 0;
+          {weekKm.map((km, i) => {
+            const isToday  = i === (new Date().getDay() + 6) % 7;
+            const heightPct = weekMax > 0 ? km / weekMax : 0;
             return (
               <View key={i} style={styles.weekBarCol}>
                 <View style={styles.weekBarTrack}>
@@ -362,21 +600,24 @@ export function RunScreen() {
           })}
         </View>
 
-        {/* Week stats row */}
         <View style={styles.weekStatsRow}>
           <View style={styles.weekStatItem}>
-            <Text style={styles.weekStatValue}>5</Text>
+            <Text style={styles.weekStatValue}>{runHistory.length}</Text>
             <Text style={styles.weekStatLabel}>Activities</Text>
           </View>
           <View style={styles.weekStatSep} />
           <View style={styles.weekStatItem}>
-            <Text style={[styles.weekStatValue, { color: Colors.ORANGE }]}>2,432</Text>
+            <Text style={[styles.weekStatValue, { color: Colors.ORANGE }]}>
+              {runHistory.reduce((s, r) => s + (r.calories_burned ?? 0), 0).toLocaleString()}
+            </Text>
             <Text style={styles.weekStatLabel}>kcal</Text>
           </View>
           <View style={styles.weekStatSep} />
           <View style={styles.weekStatItem}>
-            <Text style={[styles.weekStatValue, { color: Colors.TEAL }]}>695</Text>
-            <Text style={styles.weekStatLabel}>m elevation</Text>
+            <Text style={[styles.weekStatValue, { color: Colors.TEAL }]}>
+              {Math.round(runHistory.reduce((s, r) => s + 0, 0))}m
+            </Text>
+            <Text style={styles.weekStatLabel}>elevation</Text>
           </View>
         </View>
       </View>
@@ -398,46 +639,50 @@ export function RunScreen() {
       {/* Recent activities */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionEyebrow}>Recent</Text>
-        <TouchableOpacity>
-          <Text style={styles.seeAll}>See all</Text>
-        </TouchableOpacity>
       </View>
 
-      {RUN_HISTORY.filter((r) => r.distance > 0).map((run) => {
-        const activity = ACTIVITY_TYPES.find((a) => a.id === run.type)!;
-        return (
-          <Pressable key={run.id} style={styles.runRow}>
-            <View style={[styles.runIcon, { backgroundColor: activity.color + '15' }]}>
-              <Ionicons name={activity.icon} size={18} color={activity.color} />
-            </View>
-            <View style={styles.runInfo}>
-              <View style={styles.runInfoTop}>
-                <Text style={styles.runType}>{activity.label}</Text>
-                <Text style={styles.runDate}>{run.date}</Text>
+      {runHistory.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <Ionicons name="walk-outline" size={32} color={Colors.TEXT_TERTIARY} />
+          <Text style={styles.emptyText}>No activities yet</Text>
+          <Text style={styles.emptySub}>Start your first run above</Text>
+        </View>
+      ) : (
+        runHistory.map((run) => {
+          const activity = ACTIVITY_TYPES.find((a) => a.id === run.activity_type) ?? ACTIVITY_TYPES[0];
+          return (
+            <Pressable key={run.id} style={styles.runRow}>
+              <View style={[styles.runIcon, { backgroundColor: activity.color + '15' }]}>
+                <Ionicons name={activity.icon} size={18} color={activity.color} />
               </View>
-              <View style={styles.runStats}>
-                <Text style={styles.runDist}>{run.distance}km</Text>
-                <View style={styles.runStatDot} />
-                <Text style={styles.runMeta}>{formatTime(run.duration)}</Text>
-                {run.pace !== '--' && (
-                  <>
-                    <View style={styles.runStatDot} />
-                    <Text style={styles.runMeta}>{run.pace}/km</Text>
-                  </>
-                )}
-                {run.elevation > 0 && (
-                  <>
-                    <View style={styles.runStatDot} />
-                    <Ionicons name="trending-up-outline" size={11} color={Colors.TEXT_TERTIARY} />
-                    <Text style={styles.runMeta}>{run.elevation}m</Text>
-                  </>
-                )}
+              <View style={styles.runInfo}>
+                <View style={styles.runInfoTop}>
+                  <Text style={styles.runType}>{activity.label}</Text>
+                  <Text style={styles.runDate}>
+                    {new Date(run.started_at).toLocaleDateString('en-NP')}
+                  </Text>
+                </View>
+                <View style={styles.runStats}>
+                  <Text style={styles.runDist}>
+                    {(run.distance_m / 1000).toFixed(2)}km
+                  </Text>
+                  <View style={styles.runStatDot} />
+                  <Text style={styles.runMeta}>{formatTime(run.duration_seconds)}</Text>
+                  {run.avg_pace_spm && (
+                    <>
+                      <View style={styles.runStatDot} />
+                      <Text style={styles.runMeta}>
+                        {formatPace(run.distance_m / 1000, run.duration_seconds)}/km
+                      </Text>
+                    </>
+                  )}
+                </View>
               </View>
-            </View>
-            <Text style={styles.runCals}>{run.calories} kcal</Text>
-          </Pressable>
-        );
-      })}
+              <Text style={styles.runCals}>{run.calories_burned ?? 0} kcal</Text>
+            </Pressable>
+          );
+        })
+      )}
 
     </ScrollView>
   );
@@ -449,45 +694,46 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.BG_BASE,
   },
   scroll: {
-    paddingTop:    56,
-    paddingBottom: 48,
+    paddingBottom: 100,
   },
-
-  // Header
   header: {
     flexDirection:     'row',
     justifyContent:    'space-between',
     alignItems:        'flex-start',
     paddingHorizontal: Spacing.S5,
-    marginBottom:      Spacing.S5,
+    marginBottom:      Spacing.S4,
   },
   eyebrow: {
-    fontSize:      12,
+    fontSize:      11,
+    fontWeight:    '600',
     color:         Colors.TEXT_TERTIARY,
-    fontWeight:    '500',
     textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    marginBottom:  3,
+    letterSpacing: 0.1,
+    marginBottom:  2,
   },
   title: {
-    fontSize:     30,
+    fontSize:     28,
     fontWeight:   '700',
     color:        Colors.TEXT_PRIMARY,
-    letterSpacing: -1,
+    letterSpacing: -0.8,
   },
-  historyBtn: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             5,
-    paddingVertical: 8,
+  locationError: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               6,
+    marginHorizontal:  Spacing.S5,
+    marginBottom:      Spacing.S3,
+    backgroundColor:   Colors.ORANGE + '15',
+    borderRadius:      Radius.MD,
+    padding:           Spacing.S3,
+    borderWidth:       StyleSheet.hairlineWidth,
+    borderColor:       Colors.ORANGE + '40',
   },
-  historyBtnText: {
-    fontSize:   13,
-    color:      Colors.TEXT_SECONDARY,
-    fontWeight: '500',
+  locationErrorText: {
+    fontSize: 12,
+    color:    Colors.ORANGE,
+    flex:     1,
   },
-
-  // Activity selector
   activityRow: {
     flexDirection:     'row',
     paddingHorizontal: Spacing.S5,
@@ -498,59 +744,54 @@ const styles = StyleSheet.create({
     flex:            1,
     alignItems:      'center',
     paddingVertical: Spacing.S3,
-    gap:             5,
     backgroundColor: Colors.BG_SURFACE,
     borderRadius:    Radius.MD,
     borderWidth:     StyleSheet.hairlineWidth,
     borderColor:     Colors.BORDER,
+    gap:             4,
   },
   activityBtnActive: {
     backgroundColor: Colors.BG_SURFACE_2,
-    borderWidth:     1.5,
   },
   activityLabel: {
     fontSize:   10,
-    color:      Colors.TEXT_TERTIARY,
     fontWeight: '500',
+    color:      Colors.TEXT_TERTIARY,
   },
-
-  // Start button
   startRunCard: {
     marginHorizontal: Spacing.S5,
-    marginBottom:     Spacing.S5,
     borderRadius:     Radius.LG,
-    padding:          Spacing.S6,
-    alignItems:       'center',
+    marginBottom:     Spacing.S5,
+    overflow:         'hidden',
   },
   startRunInner: {
-    alignItems: 'center',
-    gap:        Spacing.S3,
+    alignItems:      'center',
+    paddingVertical: Spacing.S8,
+    gap:             Spacing.S2,
   },
   startRunPlayBtn: {
-    width:           80,
-    height:          80,
-    borderRadius:    40,
+    width:           72,
+    height:          72,
+    borderRadius:    36,
     backgroundColor: 'rgba(0,0,0,0.2)',
     alignItems:      'center',
     justifyContent:  'center',
     marginBottom:    Spacing.S2,
   },
   startRunText: {
-    fontSize:     22,
-    fontWeight:   '700',
-    color:        Colors.BG_BASE,
+    fontSize:   22,
+    fontWeight: '700',
+    color:      Colors.BG_BASE,
     letterSpacing: -0.5,
   },
   startRunSub: {
-    fontSize:   12,
-    color:      Colors.BG_BASE + 'aa',
-    fontWeight: '500',
+    fontSize:  13,
+    color:     Colors.BG_BASE + 'aa',
+    fontWeight: '400',
   },
-
-  // Card
   card: {
     marginHorizontal: Spacing.S5,
-    marginBottom:     Spacing.S5,
+    marginBottom:     Spacing.S4,
     backgroundColor:  Colors.BG_SURFACE,
     borderRadius:     Radius.LG,
     padding:          Spacing.S4,
@@ -571,29 +812,84 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   cardValue: {
-    fontSize:     20,
-    fontWeight:   '700',
-    color:        Colors.TEXT_PRIMARY,
-    letterSpacing: -0.5,
+    fontSize:   20,
+    fontWeight: '700',
+    color:      Colors.TEXT_PRIMARY,
   },
   cardUnit: {
     fontSize:   14,
     color:      Colors.TEXT_TERTIARY,
     fontWeight: '400',
   },
-
-  // Week chart
+  mapGridBg: {
+    position:        'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: Colors.BG_SURFACE,
+    opacity:         1,
+  },
+  mapTopBadge: {
+    position:          'absolute',
+    top:               Spacing.S3,
+    alignSelf:         'center',
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               6,
+    backgroundColor:   Colors.BG_SURFACE_2,
+    borderRadius:      Radius.FULL,
+    paddingHorizontal: Spacing.S4,
+    paddingVertical:   6,
+    borderWidth:       StyleSheet.hairlineWidth,
+    borderColor:       Colors.BORDER_2,
+    zIndex:            10,
+  },
+  gpsStatusDot: {
+    width:        6,
+    height:       6,
+    borderRadius: 3,
+  },
+  gpsStatusText: {
+    fontSize:   11,
+    color:      Colors.TEXT_SECONDARY,
+    fontWeight: '500',
+  },
+  mapCenter: {
+    flex:           1,
+    alignItems:     'center',
+    justifyContent: 'center',
+  },
+  routeContainer: {
+    width:    400,
+    height:   200,
+    position: 'relative',
+  },
+  routePoint: {
+    position: 'absolute',
+  },
+  mapPlaceholder: {
+    alignItems: 'center',
+    gap:        Spacing.S2,
+  },
+  mapPlaceholderText: {
+    fontSize:  12,
+    color:     Colors.TEXT_TERTIARY,
+    marginTop: Spacing.S2,
+  },
+  mapPlaceholderSub: {
+    fontSize: 10,
+    color:    Colors.TEXT_TERTIARY,
+    opacity:  0.6,
+  },
   weekChart: {
     flexDirection: 'row',
     height:        64,
-    gap:           4,
+    gap:           6,
     alignItems:    'flex-end',
-    marginBottom:  Spacing.S4,
+    marginBottom:  Spacing.S3,
   },
   weekBarCol: {
-    flex:      1,
+    flex:       1,
     alignItems: 'center',
-    gap:        5,
+    gap:        4,
   },
   weekBarTrack: {
     flex:           1,
@@ -606,32 +902,33 @@ const styles = StyleSheet.create({
     minHeight:    3,
   },
   weekBarLabel: {
-    fontSize:  9,
-    color:     Colors.TEXT_TERTIARY,
+    fontSize:   9,
+    color:      Colors.TEXT_TERTIARY,
     fontWeight: '500',
   },
-
-  // Week stats
   weekStatsRow: {
     flexDirection:   'row',
-    borderTopWidth:  StyleSheet.hairlineWidth,
-    borderTopColor:  Colors.BORDER,
-    paddingTop:      Spacing.S3,
+    backgroundColor: Colors.BG_SURFACE_2,
+    borderRadius:    Radius.MD,
+    overflow:        'hidden',
+    borderWidth:     StyleSheet.hairlineWidth,
+    borderColor:     Colors.BORDER,
   },
   weekStatItem: {
-    flex:       1,
-    alignItems: 'center',
-    gap:        3,
+    flex:            1,
+    alignItems:      'center',
+    paddingVertical: Spacing.S3,
+    gap:             2,
   },
   weekStatSep: {
     width:           StyleSheet.hairlineWidth,
     backgroundColor: Colors.BORDER,
-    marginVertical:  4,
+    marginVertical:  Spacing.S2,
   },
   weekStatValue: {
     fontSize:     16,
     fontWeight:   '700',
-    color:        Colors.TEXT_PRIMARY,
+    color:        Colors.ACCENT,
     letterSpacing: -0.3,
   },
   weekStatLabel: {
@@ -639,10 +936,7 @@ const styles = StyleSheet.create({
     color:         Colors.TEXT_TERTIARY,
     fontWeight:    '500',
     textTransform: 'uppercase',
-    letterSpacing: 0.05,
   },
-
-  // Section headers
   sectionHeader: {
     flexDirection:     'row',
     justifyContent:    'space-between',
@@ -662,8 +956,6 @@ const styles = StyleSheet.create({
     color:      Colors.ACCENT,
     fontWeight: '500',
   },
-
-  // Personal bests
   pbGrid: {
     flexDirection:     'row',
     paddingHorizontal: Spacing.S5,
@@ -672,13 +964,13 @@ const styles = StyleSheet.create({
   },
   pbCard: {
     flex:            1,
+    alignItems:      'center',
     backgroundColor: Colors.BG_SURFACE,
     borderRadius:    Radius.MD,
     padding:         Spacing.S3,
-    alignItems:      'center',
-    gap:             4,
     borderWidth:     StyleSheet.hairlineWidth,
     borderColor:     Colors.BORDER,
+    gap:             4,
   },
   pbValue: {
     fontSize:     16,
@@ -686,15 +978,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   pbLabel: {
-    fontSize:      9,
-    color:         Colors.TEXT_TERTIARY,
-    fontWeight:    '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.05,
-    textAlign:     'center',
+    fontSize:   9,
+    color:      Colors.TEXT_TERTIARY,
+    fontWeight: '500',
+    textAlign:  'center',
   },
-
-  // Run history rows
   runRow: {
     flexDirection:     'row',
     alignItems:        'center',
@@ -718,10 +1006,9 @@ const styles = StyleSheet.create({
   runInfoTop: {
     flexDirection:  'row',
     justifyContent: 'space-between',
-    alignItems:     'center',
   },
   runType: {
-    fontSize:   14,
+    fontSize:   13,
     fontWeight: '500',
     color:      Colors.TEXT_PRIMARY,
   },
@@ -738,7 +1025,6 @@ const styles = StyleSheet.create({
     fontSize:   13,
     fontWeight: '600',
     color:      Colors.ACCENT,
-    fontFamily: 'monospace',
   },
   runStatDot: {
     width:           3,
@@ -747,14 +1033,27 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.TEXT_TERTIARY,
   },
   runMeta: {
-    fontSize:   11,
-    color:      Colors.TEXT_TERTIARY,
-    fontFamily: 'monospace',
+    fontSize: 11,
+    color:    Colors.TEXT_TERTIARY,
   },
   runCals: {
-    fontSize:   11,
+    fontSize:   12,
     color:      Colors.TEXT_TERTIARY,
     fontWeight: '500',
+  },
+  emptyWrap: {
+    alignItems:      'center',
+    paddingVertical: Spacing.S8,
+    gap:             Spacing.S2,
+  },
+  emptyText: {
+    fontSize:   14,
+    fontWeight: '500',
+    color:      Colors.TEXT_PRIMARY,
+  },
+  emptySub: {
+    fontSize:  12,
+    color:     Colors.TEXT_TERTIARY,
   },
 
   // Live tracker styles
@@ -763,13 +1062,12 @@ const styles = StyleSheet.create({
     justifyContent:    'space-between',
     alignItems:        'center',
     paddingHorizontal: Spacing.S5,
-    paddingTop:        56,
     paddingBottom:     Spacing.S3,
   },
   liveHeaderLeft: {
     flexDirection: 'row',
     alignItems:    'center',
-    gap:           6,
+    gap:           8,
   },
   liveDot: {
     width:           8,
@@ -786,10 +1084,10 @@ const styles = StyleSheet.create({
     color:      Colors.TEXT_PRIMARY,
   },
   endBtn: {
-    paddingHorizontal: 20,
-    paddingVertical:   8,
-    borderRadius:      Radius.FULL,
+    paddingHorizontal: Spacing.S4,
+    paddingVertical:   Spacing.S2,
     backgroundColor:   Colors.RED_DIM,
+    borderRadius:      Radius.FULL,
     borderWidth:       StyleSheet.hairlineWidth,
     borderColor:       Colors.RED + '40',
   },
@@ -798,107 +1096,107 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color:      Colors.RED,
   },
-
-  // Map area
   mapArea: {
     height:          220,
-    marginHorizontal: Spacing.S5,
-    borderRadius:    Radius.LG,
-    overflow:        'hidden',
     backgroundColor: Colors.BG_SURFACE,
-    borderWidth:     StyleSheet.hairlineWidth,
-    borderColor:     Colors.BORDER,
-    marginBottom:    Spacing.S4,
     position:        'relative',
+    overflow:        'hidden',
   },
   mapGrid: {
     position:   'absolute',
-    inset:       0,
-    opacity:     0.15,
+    top:        0,
+    left:       0,
+    right:      0,
+    bottom:     0,
+    opacity:    0.05,
   },
   mapContent: {
     flex:           1,
     alignItems:     'center',
     justifyContent: 'center',
   },
-  mapRoute: {
+  gpsInfoWrap: {
     alignItems: 'center',
-    gap:        4,
+    gap:        Spacing.S3,
   },
-  mapRouteLine: {
-    width:           2,
-    height:          80,
-    backgroundColor: Colors.ACCENT,
-    borderRadius:    1,
-    opacity:         0.6,
-  },
-  mapDot: {
-    width:           14,
-    height:          14,
-    borderRadius:    7,
-    backgroundColor: Colors.ACCENT,
-    borderWidth:     3,
-    borderColor:     Colors.BG_BASE,
-  },
-  mapLocationBadge: {
-    position:          'absolute',
-    bottom:            12,
-    right:             12,
+  gpsInfoBadge: {
     flexDirection:     'row',
     alignItems:        'center',
-    gap:               4,
-    backgroundColor:   Colors.BG_SURFACE_2,
+    gap:               5,
+    backgroundColor:   Colors.ACCENT + '20',
     borderRadius:      Radius.FULL,
-    paddingHorizontal: 10,
+    paddingHorizontal: Spacing.S3,
     paddingVertical:   5,
     borderWidth:       StyleSheet.hairlineWidth,
-    borderColor:       Colors.BORDER,
+    borderColor:       Colors.ACCENT + '40',
   },
-  mapLocationText: {
+  gpsInfoText: {
     fontSize:   11,
-    color:      Colors.TEXT_SECONDARY,
+    color:      Colors.ACCENT,
     fontWeight: '500',
   },
-
-  // Live stats
+  gpsSearchText: {
+    fontSize:   13,
+    color:      Colors.TEXT_TERTIARY,
+  },
+  routeVisual: {
+    flexDirection: 'row',
+    gap:           4,
+    flexWrap:      'wrap',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.S5,
+  },
+  routeDot: {
+    width:           6,
+    height:          6,
+    borderRadius:    3,
+    backgroundColor: Colors.ACCENT,
+    opacity:         0.5,
+  },
+  routeDotCurrent: {
+    width:           10,
+    height:          10,
+    borderRadius:    5,
+    opacity:         1,
+  },
   liveStats: {
     paddingHorizontal: Spacing.S5,
-    marginBottom:      Spacing.S4,
-    alignItems:        'center',
+    paddingVertical:   Spacing.S4,
     gap:               Spacing.S4,
   },
   liveStatPrimary: {
-    flexDirection: 'row',
-    alignItems:    'baseline',
-    gap:           6,
+    flexDirection:  'row',
+    alignItems:     'flex-end',
+    justifyContent: 'center',
+    gap:            4,
   },
   liveDistance: {
-    fontSize:     64,
+    fontSize:     72,
     fontWeight:   '700',
     color:        Colors.TEXT_PRIMARY,
     letterSpacing: -3,
     fontFamily:   'monospace',
-    lineHeight:   68,
+    lineHeight:   76,
   },
   liveDistanceUnit: {
-    fontSize:   22,
-    color:      Colors.TEXT_SECONDARY,
+    fontSize:   24,
+    color:      Colors.TEXT_TERTIARY,
     fontWeight: '400',
+    paddingBottom: 10,
   },
   liveStatRow: {
     flexDirection:   'row',
-    width:           '100%',
     backgroundColor: Colors.BG_SURFACE,
     borderRadius:    Radius.LG,
+    overflow:        'hidden',
     borderWidth:     StyleSheet.hairlineWidth,
     borderColor:     Colors.BORDER,
-    overflow:        'hidden',
   },
   liveStat: {
-    flex:           1,
-    alignItems:     'center',
+    flex:            1,
+    alignItems:      'center',
     paddingVertical: Spacing.S3,
-    gap:            3,
+    gap:             3,
   },
   liveStatSep: {
     width:           StyleSheet.hairlineWidth,
@@ -906,10 +1204,10 @@ const styles = StyleSheet.create({
     marginVertical:  Spacing.S2,
   },
   liveStatValue: {
-    fontSize:     18,
+    fontSize:     16,
     fontWeight:   '700',
     color:        Colors.TEXT_PRIMARY,
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
     fontFamily:   'monospace',
   },
   liveStatLabel: {
@@ -917,13 +1215,10 @@ const styles = StyleSheet.create({
     color:         Colors.TEXT_TERTIARY,
     fontWeight:    '500',
     textTransform: 'uppercase',
-    letterSpacing: 0.05,
   },
-
-  // Splits
   splitsWrap: {
     paddingHorizontal: Spacing.S5,
-    marginBottom:      Spacing.S4,
+    marginBottom:      Spacing.S3,
   },
   splitsTitle: {
     fontSize:      11,
@@ -938,55 +1233,66 @@ const styles = StyleSheet.create({
     gap:           8,
   },
   splitChip: {
+    alignItems:        'center',
     backgroundColor:   Colors.BG_SURFACE,
     borderRadius:      Radius.MD,
-    paddingHorizontal: 14,
+    paddingHorizontal: Spacing.S3,
     paddingVertical:   Spacing.S2,
-    alignItems:        'center',
-    gap:               2,
     borderWidth:       StyleSheet.hairlineWidth,
     borderColor:       Colors.BORDER,
+    minWidth:          60,
   },
   splitKm: {
-    fontSize:      9,
-    color:         Colors.TEXT_TERTIARY,
-    fontWeight:    '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.08,
+    fontSize:   9,
+    color:      Colors.TEXT_TERTIARY,
+    fontWeight: '600',
   },
   splitPace: {
-    fontSize:   14,
+    fontSize:   13,
     fontWeight: '700',
     color:      Colors.ACCENT,
     fontFamily: 'monospace',
   },
-
-  // Live controls
   liveControls: {
-    flexDirection:     'row',
-    alignItems:        'center',
-    justifyContent:    'center',
-    gap:               Spacing.S6,
-    paddingHorizontal: Spacing.S5,
-    paddingBottom:     48,
-    paddingTop:        Spacing.S4,
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             Spacing.S5,
+    paddingVertical: Spacing.S6,
+    paddingBottom:   10
   },
   controlPrimary: {
-    width:           72,
-    height:          72,
-    borderRadius:    36,
+    width:           80,
+    height:          80,
+    borderRadius:    40,
     backgroundColor: Colors.ACCENT,
     alignItems:      'center',
     justifyContent:  'center',
   },
   controlSecondary: {
-    width:           48,
-    height:          48,
-    borderRadius:    24,
+    width:           52,
+    height:          52,
+    borderRadius:    26,
     backgroundColor: Colors.BG_SURFACE,
     borderWidth:     StyleSheet.hairlineWidth,
     borderColor:     Colors.BORDER,
     alignItems:      'center',
     justifyContent:  'center',
+  },
+  historyBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               4,
+    paddingHorizontal: Spacing.S3,
+    paddingVertical:   Spacing.S2,
+    backgroundColor:   Colors.BG_SURFACE,
+    borderRadius:      Radius.FULL,
+    borderWidth:       StyleSheet.hairlineWidth,
+    borderColor:       Colors.BORDER,
+  },
+  historyBtnText: {
+    fontSize:   12,
+    color:      Colors.TEXT_SECONDARY,
+    fontWeight: '500',
   },
 });
