@@ -8,12 +8,15 @@ import { TabNavigator } from './TabNavigator';
 import { OnboardingScreen } from '../screens/auth/Onboarding.screen';
 import { navigationRef } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
+import { EditProfileScreen } from '../screens/profile/EditProfile.screen';
 
 export type RootStackParamList = {
   Auth:       undefined;
   Onboarding: undefined;
   Main:       undefined;
+  
 };
+
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 

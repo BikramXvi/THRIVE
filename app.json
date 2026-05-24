@@ -1,31 +1,28 @@
 {
   "expo": {
-    "name": "fitnepal",
-    "slug": "fitnepal",
+    "name": "Thrive",
+    "slug": "thrive-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#0a0a0b"
     },
-    "ios": {
-      "supportsTablet": true
-    },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/android-icon-foreground.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a0b"
-      }
+      },
+      "package": "com.thrive.app"
+    },
+    "ios": {
+      "bundleIdentifier": "com.thrive.app",
+      "supportsTablet": false
     },
     "web": {
-      "bundler": "metro",
-      "output": "single"
-    },
-    "plugins": [
-      "expo-font"
-    ]
+      "favicon": "./assets/favicon.png"
+    }
   }
 }

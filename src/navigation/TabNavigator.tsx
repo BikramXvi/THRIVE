@@ -1,5 +1,8 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SleepScreen } from '../screens/sleep/Sleep.screen';
+import { BodyMetricsScreen } from '../screens/metrics/BodyMetrics.screen';
+import { EditProfileScreen } from '../screens/profile/EditProfile.screen';
 import {
   View,
   Text,
@@ -35,17 +38,31 @@ export type TabParamList = {
 
 export type TrainStackParamList = {
   WorkoutList:   undefined;
-  ActiveWorkout: undefined;
+  ActiveWorkout: {
+    programId:   string;
+    programName: string;
+    exercises:   string[]; 
+    resume?: boolean;
+  } | undefined;
 };
 
 export type HomeStackParamList = {
+  Sleep: undefined;
   HomeMain: undefined;
   AICoach:  undefined;
+  BodyMetrics: undefined;
+  EditProfile: undefined;
+};
+
+export type ProfileStackParamList = {
+  ProfileMain: undefined;
+  EditProfile: undefined;
 };
 
 const Tab   = createBottomTabNavigator<TabParamList>();
 const Train = createNativeStackNavigator<TrainStackParamList>();
 const Home  = createNativeStackNavigator<HomeStackParamList>();
+const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 
 function TrainNavigator() {
   return (
@@ -61,7 +78,19 @@ function HomeNavigator() {
     <Home.Navigator screenOptions={{ headerShown: false }}>
       <Home.Screen name="HomeMain" component={HomeScreen} />
       <Home.Screen name="AICoach"  component={AICoachScreen} />
+      <Home.Screen name="Sleep"    component={SleepScreen} />
+      <Home.Screen name="BodyMetrics" component={BodyMetricsScreen} />
+      <Home.Screen name="EditProfile" component={EditProfileScreen} />
     </Home.Navigator>
+  );
+}
+
+function ProfileNavigator() {
+  return (
+    <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
+      <ProfileStack.Screen name="ProfileMain" component={ProfileScreen}     />
+      <ProfileStack.Screen name="EditProfile" component={EditProfileScreen} />
+    </ProfileStack.Navigator>
   );
 }
 
@@ -75,7 +104,7 @@ interface SleepSheetProps {
   onClose:  () => void;
 }
 
-function SleepSheet({ visible, onClose }: SleepSheetProps) {
+export function SleepSheet({ visible, onClose }: SleepSheetProps) {
   const [bedtime,  setBedtime]  = useState('22:00');
   const [wakeTime, setWakeTime] = useState('06:00');
   const [quality,  setQuality]  = useState(4);
@@ -327,6 +356,9 @@ function FAB() {
         case 'run':
           navigate('Run');
           break;
+        case 'weight':
+          navigate('BodyMetrics');
+          break;
         case 'food':
           navigate('Diet');
           break;
@@ -413,12 +445,12 @@ const FAB_ACTIONS: {
   icon:  keyof typeof Ionicons.glyphMap;
   color: string;
 }[] = [
-  { id: 'workout', label: 'Log workout', icon: 'barbell-outline',   color: Colors.ACCENT  },
-  { id: 'run',     label: 'Start run',   icon: 'walk-outline',      color: Colors.BLUE    },
-  { id: 'food',    label: 'Log food',    icon: 'nutrition-outline', color: Colors.ORANGE  },
-  { id: 'sleep',   label: 'Log sleep',   icon: 'moon-outline',      color: Colors.TEAL    },
-  { id: 'weight',  label: 'Log weight',  icon: 'scale-outline',     color: Colors.PURPLE  },
-  { id: 'kai',     label: 'Ask Kai',     icon: 'sparkles-outline',  color: Colors.PURPLE  },
+  { id: 'workout', label: 'Log Workout',    icon: 'barbell-outline',   color: Colors.ACCENT  },
+  { id: 'run',     label: 'Start Run',      icon: 'walk-outline',      color: Colors.BLUE    },
+  { id: 'food',    label: 'Log Food',       icon: 'nutrition-outline', color: Colors.ORANGE  },
+  { id: 'sleep',   label: 'Log Sleep',  icon: 'moon-outline',      color: Colors.TEAL    },
+  { id: 'weight',  label: 'Log Weight',     icon: 'scale-outline',     color: Colors.PURPLE  },
+  { id: 'kai',     label: 'Ask Kai',        icon: 'sparkles-outline',  color: Colors.PURPLE  },
 ];
 
 export function TabNavigator() {
@@ -449,7 +481,7 @@ export function TabNavigator() {
         <Tab.Screen name="Train"   component={TrainNavigator} />
         <Tab.Screen name="Diet"    component={DietScreen}     />
         <Tab.Screen name="Run"     component={RunScreen}      />
-        <Tab.Screen name="Profile" component={ProfileScreen}  />
+        <Tab.Screen name="Profile" component={ProfileNavigator}  />
       </Tab.Navigator>
 
       <FAB />

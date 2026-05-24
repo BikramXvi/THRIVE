@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { HomeSkeleton } from '../../components/home/HomeSkeleton';
 import { ErrorState } from '../../components/common/ErrorState';
 import { useSafeTop } from '../../hooks/useSafeTop';
+import { useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,9 +14,14 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { HomeStackParamList } from '../../navigation/TabNavigator';
+import { userService } from '../../services/user.service';
+import { workoutService } from '../../services/workout.service';
+import { runService } from '../../services/run.service';
+import { navigate } from '../../lib/navigation';
+
 
 type HomeNav = NativeStackNavigationProp<HomeStackParamList>;
 
@@ -45,15 +51,17 @@ function getGreeting(): string {
   return 'Good night,';
 }
 
-function getDays(): { label: string; done: boolean; today: boolean }[] {
-  const names = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+function getDays(currentStreak: number): { label: string; done: boolean; today: boolean }[] {
+  const names = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
   const today = new Date().getDay();
-  const done  = [true, true, true, true, true, false, false];
-  return names.map((label, i) => ({
-    label,
-    done:  done[i],
-    today: i === today,
-  }));
+  return names.map((label, i) => {
+    const daysAgo = (today - i + 7) % 7;
+    return {
+      label,
+      done:  daysAgo < currentStreak,
+      today: i === today,
+    };
+  });
 }
 
 const DEFAULT_STATS: EditableStat[] = [
@@ -102,6 +110,14 @@ const DEFAULT_STATS: EditableStat[] = [
 const WEEK_CHART = [3200, 4100, 2800, 5200, 3900, 1847, 0];
 const WEEK_DAYS  = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 const CHART_MAX  = Math.max(...WEEK_CHART);
+// const [streak,      setStreak]      = useState(0);
+// const [weekChart,   setWeekChart]   = useState([0,0,0,0,0,0,0]);
+// const [weekStats,   setWeekStats]   = useState({
+//   workouts: 0,
+//   kmTotal:  0,
+//   avgSleep: 0,
+//   avgProtein: 0,
+// });
 
 interface StatCardProps {
   stat:     EditableStat;
@@ -151,37 +167,55 @@ interface WeekChartProps {
 }
 
 function WeekChart({ data, days, maxVal, todayIdx }: WeekChartProps) {
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+
   return (
     <View style={styles.chartWrap}>
       <View style={styles.chartBars}>
         {data.map((val, i) => {
           const heightPct = maxVal > 0 ? val / maxVal : 0;
           const isToday   = i === todayIdx;
+          const isSelected = selectedIdx === i;
           const isEmpty   = val === 0;
           return (
-            <View key={i} style={styles.chartBarCol}>
+            <TouchableOpacity
+              key={i}
+              style={styles.chartBarCol}
+              onPress={() => setSelectedIdx(isSelected ? null : i)}
+              activeOpacity={0.7}
+            >
+              {isSelected && val > 0 && (
+                <View style={styles.chartTooltip}>
+                  <Text style={styles.chartTooltipText}>{val.toLocaleString()}</Text>
+                </View>
+              )}
               <View style={styles.chartBarTrack}>
                 <View style={[
                   styles.chartBarFill,
                   {
                     height:          `${Math.round(heightPct * 100)}%` as any,
-                    backgroundColor: isToday
-                      ? Colors.ACCENT
-                      : isEmpty
-                        ? Colors.BG_SURFACE_3
+                    backgroundColor: isSelected
+                      ? Colors.BLUE
+                      : isToday
+                        ? Colors.ACCENT
                         : Colors.BG_SURFACE_3,
-                    borderColor: isToday ? Colors.ACCENT : 'transparent',
-                    opacity:     isEmpty ? 0.3 : isToday ? 1 : 0.55,
+                    borderColor:     isSelected
+                      ? Colors.BLUE
+                      : isToday
+                        ? Colors.ACCENT
+                        : 'transparent',
+                    opacity: isEmpty ? 0.3 : 1,
                   },
                 ]} />
               </View>
               <Text style={[
                 styles.chartDayLabel,
-                isToday && { color: Colors.ACCENT, fontWeight: '600' },
+                isToday    && { color: Colors.ACCENT, fontWeight: '600' },
+                isSelected && { color: Colors.BLUE },
               ]}>
                 {days[i]}
               </Text>
-            </View>
+            </TouchableOpacity>
           );
         })}
       </View>
@@ -209,17 +243,29 @@ const TODAY_WORKOUTS = [
 ];
 
 export function HomeScreen() {
-  const navigation     = useNavigation<HomeNav>();
-  const safeTop        = useSafeTop();
-  const [profile,      setProfile]      = useState<UserProfile | null>(null);
-  const [loading,      setLoading]      = useState(true);
-  const [error,        setError]        = useState<string | null>(null);
-  const [stats,        setStats]        = useState<EditableStat[]>(DEFAULT_STATS);
+  const navigation  = useNavigation<HomeNav>();
+  const safeTop     = useSafeTop();
+  const [profile,    setProfile]    = useState<UserProfile | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState<string | null>(null);
+  const [stats,      setStats]      = useState<EditableStat[]>(DEFAULT_STATS);
   const [editingStatId, setEditingStatId] = useState<string | null>(null);
-  const [workouts,     setWorkouts]     = useState(TODAY_WORKOUTS);
+  const [workouts,   setWorkouts]   = useState(TODAY_WORKOUTS);
+  const [streak,     setStreak]     = useState(0);
+  const [weekChart,  setWeekChart]  = useState([0,0,0,0,0,0,0]);
+  const [weekStats,  setWeekStats]  = useState({
+    workouts:   0,
+    kmTotal:    0,
+    avgSleep:   0,
+    avgProtein: 0,
+  });
   const todayIdx = (new Date().getDay() + 6) % 7;
 
-  useEffect(() => { loadProfile(); }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+    }, [])
+  );
 
   async function loadProfile() {
     setLoading(true);
@@ -227,22 +273,90 @@ export function HomeScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data, error: dbError } = await supabase
-        .from('users')
-        .select('display_name, username, tier')
-        .eq('id', user.id)
-        .single();
   
-      // PGRST116 means no row found -- not a real error
-      if (dbError && dbError.code !== 'PGRST116') throw dbError;
-      if (data) setProfile(data as UserProfile);
+      const [
+        profileRes,
+        nutritionRes,
+        sleepRes,
+        streakRes,
+        weekChartRes,
+        weekKmRes,
+        weekWorkoutsRes,
+      ] = await Promise.all([
+        supabase
+          .from('users')
+          .select('display_name, username, tier')
+          .eq('id', user.id)
+          .single(),
+        userService.getTodayNutrition(user.id),
+        userService.getTodaySleep(user.id),
+        workoutService.getStreak(user.id),
+        userService.getWeeklyCalories(user.id),
+        runService.getWeeklyKm(user.id),
+        workoutService.getWeeklyWorkoutCount(user.id),
+      ]);
+  
+      const profile = profileRes.data as { display_name: string | null; username: string; tier: string } | null;
+      if (profile) setProfile(profile);
+  
+      if (nutritionRes.data) {
+        setStats((prev) => prev.map((s) => {
+          if (s.id === 'calories') return {
+            ...s,
+            value: nutritionRes.data!.calories.toLocaleString(),
+            pct:   Math.min(nutritionRes.data!.calories / 2400, 1),
+          };
+          if (s.id === 'protein') return {
+            ...s,
+            value: Math.round(nutritionRes.data!.protein).toString(),
+            pct:   Math.min(nutritionRes.data!.protein / 160, 1),
+          };
+          return s;
+        }));
+      }
+  
+      if (sleepRes.data !== null) {
+        setStats((prev) => prev.map((s) => {
+          if (s.id === 'sleep') return {
+            ...s,
+            value: sleepRes.data!.toString(),
+            pct:   Math.min(sleepRes.data! / 8, 1),
+          };
+          return s;
+        }));
+      }
+  
+      if (streakRes.data !== null) setStreak(streakRes.data);
+      if (weekChartRes.data)       setWeekChart(weekChartRes.data);
+  
+      const totalWeekKm = weekKmRes.data
+  ? weekKmRes.data.reduce((s: number, k: number) => s + k, 0)
+  : 0;
+  
+      if (weekKmRes.data) {
+        setStats((prev) => prev.map((s) => {
+          if (s.id === 'distance') return {
+            ...s,
+            value: totalWeekKm.toFixed(1),
+            pct:   Math.min(totalWeekKm / 30, 1),
+          };
+          return s;
+        }));
+      }
+  
+      setWeekStats({
+        workouts:   weekWorkoutsRes.data ?? 0,
+        kmTotal:    totalWeekKm,
+        avgSleep:   sleepRes.data ?? 0,
+        avgProtein: nutritionRes.data ? Math.round(nutritionRes.data.protein) : 0,
+      });
+  
     } catch (err) {
-      setError('Could not load your profile.');
+      setError('Could not load dashboard.');
     } finally {
       setLoading(false);
     }
   }
-
 
   function toggleWorkout(id: string) {
     setWorkouts((prev) =>
@@ -254,7 +368,7 @@ export function HomeScreen() {
     ?? profile?.username
     ?? 'Athlete';
 
-  const days = getDays();
+  const days = getDays(streak);
 
   if (loading) return <HomeSkeleton />;
 
@@ -289,7 +403,7 @@ export function HomeScreen() {
         <View style={styles.streakLeft}>
           <Ionicons name="flame" size={16} color={Colors.ORANGE} />
           <Text style={styles.streakText}>
-            <Text style={styles.streakNum}>21</Text> day streak
+            <Text style={styles.streakNum}>{streak}</Text> day streak
           </Text>
         </View>
         <View style={styles.streakDots}>
@@ -310,6 +424,8 @@ export function HomeScreen() {
           ))}
         </View>
       </View>
+
+
 
       {/* Divider */}
       <View style={styles.divider} />
@@ -376,33 +492,65 @@ export function HomeScreen() {
           <Text style={styles.sectionMeta}>kcal / day</Text>
         </View>
         <WeekChart
-          data={WEEK_CHART}
-          days={WEEK_DAYS}
-          maxVal={CHART_MAX}
-          todayIdx={todayIdx}
-        />
+        data={weekChart}
+        days={WEEK_DAYS}
+        maxVal={Math.max(...weekChart, 1)}
+        todayIdx={todayIdx}
+      />
         <View style={styles.weekSummaryRow}>
           <View style={styles.weekSummaryItem}>
-            <Text style={styles.weekSummaryValue}>4</Text>
+            <Text style={styles.weekSummaryValue}>{weekStats.workouts}</Text>
             <Text style={styles.weekSummaryLabel}>workouts</Text>
           </View>
           <View style={styles.weekSummarySep} />
           <View style={styles.weekSummaryItem}>
-            <Text style={[styles.weekSummaryValue, { color: Colors.BLUE }]}>38.2</Text>
+            <Text style={[styles.weekSummaryValue, { color: Colors.BLUE }]}>{weekStats.kmTotal.toFixed(1)}</Text>
             <Text style={styles.weekSummaryLabel}>km total</Text>
           </View>
           <View style={styles.weekSummarySep} />
           <View style={styles.weekSummaryItem}>
-            <Text style={[styles.weekSummaryValue, { color: Colors.TEAL }]}>7.2h</Text>
+            <Text style={[styles.weekSummaryValue, { color: Colors.TEAL }]}>{weekStats.avgSleep}h</Text>
             <Text style={styles.weekSummaryLabel}>avg sleep</Text>
           </View>
           <View style={styles.weekSummarySep} />
           <View style={styles.weekSummaryItem}>
-            <Text style={[styles.weekSummaryValue, { color: Colors.PURPLE }]}>142g</Text>
+            <Text style={[styles.weekSummaryValue, { color: Colors.PURPLE }]}>{weekStats.avgProtein}g</Text>
             <Text style={styles.weekSummaryLabel}>avg protein</Text>
           </View>
         </View>
       </View>
+
+      <TouchableOpacity
+  style={styles.sleepStrip}
+  onPress={() => navigation.navigate('Sleep')}
+>
+  <View style={styles.kaiLeft}>
+    <View style={[styles.kaiIconWrap, { backgroundColor: Colors.TEAL + '20' }]}>
+      <Ionicons name="moon-outline" size={16} color={Colors.TEAL} />
+    </View>
+    <View>
+      <Text style={styles.kaiTitle}>Sleep tracker</Text>
+      <Text style={styles.kaiSub}>View your sleep history and trends</Text>
+    </View>
+  </View>
+  <Ionicons name="chevron-forward" size={16} color={Colors.TEXT_TERTIARY} />
+</TouchableOpacity>
+
+<TouchableOpacity
+  style={[styles.sleepStrip, { backgroundColor: Colors.BLUE + '10', borderColor: Colors.BLUE + '30', marginTop: Spacing.S2 }]}
+  onPress={() => navigation.navigate('BodyMetrics')}
+>
+  <View style={styles.kaiLeft}>
+    <View style={[styles.kaiIconWrap, { backgroundColor: Colors.BLUE + '20' }]}>
+      <Ionicons name="scale-outline" size={16} color={Colors.BLUE} />
+    </View>
+    <View>
+      <Text style={styles.kaiTitle}>Body metrics</Text>
+      <Text style={styles.kaiSub}>Track weight, body fat and measurements</Text>
+    </View>
+  </View>
+  <Ionicons name="chevron-forward" size={16} color={Colors.TEXT_TERTIARY} />
+</TouchableOpacity>
 
       {/* Today's plan */}
       <View style={styles.sectionGap}>
@@ -413,38 +561,41 @@ export function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {workouts.map((w) => (
-          <TouchableOpacity
-            key={w.id}
-            style={[styles.planRow, w.done && styles.planRowDone]}
-            activeOpacity={0.75}
-            onPress={() => toggleWorkout(w.id)}
-          >
-            <View style={[styles.planCheck, w.done && styles.planCheckDone]}>
-              {w.done && (
-                <Ionicons name="checkmark" size={12} color={Colors.BG_BASE} />
-              )}
-            </View>
-            <View style={[styles.planIcon, { backgroundColor: w.color + '15' }]}>
-              <Ionicons name={w.icon} size={16} color={w.done ? Colors.TEXT_TERTIARY : w.color} />
-            </View>
-            <View style={styles.planInfo}>
-              <Text style={[styles.planName, w.done && styles.planNameDone]}>
-                {w.name}
-              </Text>
-              <Text style={styles.planMeta}>{w.meta}</Text>
-            </View>
-            {!w.done && (
-              <View style={styles.planStartBtn}>
-                <Text style={styles.planStartText}>Start</Text>
-                <Ionicons name="arrow-forward" size={12} color={Colors.BG_BASE} />
+          {workouts.map((w) => (
+            <TouchableOpacity
+              key={w.id}
+              style={[styles.planRow, w.done && styles.planRowDone]}
+              activeOpacity={0.75}
+              onPress={() => toggleWorkout(w.id)}
+            >
+              <View style={[styles.planCheck, w.done && styles.planCheckDone]}>
+                {w.done && (
+                  <Ionicons name="checkmark" size={12} color={Colors.BG_BASE} />
+                )}
               </View>
-            )}
-            {w.done && (
-              <Text style={styles.planDoneLabel}>Done</Text>
-            )}
-          </TouchableOpacity>
-        ))}
+              <View style={[styles.planIcon, { backgroundColor: w.color + '15' }]}>
+                <Ionicons name={w.icon} size={16} color={w.done ? Colors.TEXT_TERTIARY : w.color} />
+              </View>
+              <View style={styles.planInfo}>
+                <Text style={[styles.planName, w.done && styles.planNameDone]}>
+                  {w.name}
+                </Text>
+                <Text style={styles.planMeta}>{w.meta}</Text>
+              </View>
+              {!w.done && (
+                <TouchableOpacity
+                  style={styles.planStartBtn}
+                  onPress={() => navigate('Train')}
+                >
+                  <Text style={styles.planStartText}>Start</Text>
+                  <Ionicons name="arrow-forward" size={12} color={Colors.BG_BASE} />
+                </TouchableOpacity>
+              )}
+              {w.done && (
+                <Text style={styles.planDoneLabel}>Done</Text>
+              )}
+            </TouchableOpacity>
+          ))}
       </View>
 
       {/* AI Coach strip */}
@@ -492,6 +643,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     fontWeight:  '500',
     textTransform: 'uppercase',
+  },
+  sleepStrip: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    marginHorizontal:  Spacing.S5,
+    marginTop:         Spacing.S2,
+    paddingHorizontal: Spacing.S4,
+    paddingVertical:   Spacing.S3,
+    backgroundColor:   Colors.TEAL + '10',
+    borderRadius:      Radius.LG,
+    borderWidth:       StyleSheet.hairlineWidth,
+    borderColor:       Colors.TEAL + '30',
   },
   name: {
     fontSize:    30,
@@ -767,7 +931,22 @@ const styles = StyleSheet.create({
     color:     Colors.TEXT_TERTIARY,
     fontWeight: '500',
   },
-
+  chartTooltip: {
+    position:          'absolute',
+    top:               -28,
+    backgroundColor:   Colors.BG_SURFACE_2,
+    borderRadius:      Radius.SM,
+    paddingHorizontal: 6,
+    paddingVertical:   3,
+    borderWidth:       StyleSheet.hairlineWidth,
+    borderColor:       Colors.BORDER_2,
+    zIndex:            10,
+  },
+  chartTooltipText: {
+    fontSize:   10,
+    fontWeight: '600',
+    color:      Colors.TEXT_PRIMARY,
+  },
   // Week summary
   weekSummaryRow: {
     flexDirection:     'row',

@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { runService } from '../../services/run.service';
+import type { RunSessionRow } from '../../services/run.service';
 import {
   View,
   Text,
@@ -84,6 +86,11 @@ function formatDistance(km: number): string {
 }
 
 export function RunScreen() {
+  const [userId,      setUserId]      = useState<string | null>(null);
+  const [runHistory,  setRunHistory]  = useState<RunSessionRow[]>([]);
+  const [weekKm,      setWeekKm]      = useState([0,0,0,0,0,0,0]);
+  const [loadingHist, setLoadingHist] = useState(true);
+  // existing state...
   const [runState,      setRunState]      = useState<RunState>('idle');
   const [activityType,  setActivityType]  = useState<ActivityType>('run');
   const [elapsedSecs,   setElapsedSecs]   = useState(0);

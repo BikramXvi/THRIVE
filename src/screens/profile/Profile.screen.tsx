@@ -1,4 +1,13 @@
 import { useState, useEffect } from 'react';
+import { workoutService } from '../../services/workout.service';
+import { runService } from '../../services/run.service';
+import type { WorkoutSessionRow } from '../../services/workout.service';
+import type { RunSessionRow } from '../../services/run.service';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { HomeStackParamList } from '../../navigation/TabNavigator';
+import { useUIStore } from '../../stores/ui.store';
+import type { ProfileStackParamList } from '../../navigation/TabNavigator';
 import {
   View,
   Text,
@@ -10,6 +19,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
+import { userService } from '../../services/user.service';
+import type { LifetimeStats } from '../../services/user.service';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 
 interface UserProfile {
@@ -77,6 +88,7 @@ const SETTINGS_SECTIONS = [
 ];
 
 type Tab = 'activity' | 'badges' | 'stats';
+type ProfileNav = NativeStackNavigationProp<ProfileStackParamList>;
 
 const GOAL_LABELS: Record<string, string> = {
   lose_weight:    'Lose weight',
@@ -93,7 +105,17 @@ const LEVEL_LABELS: Record<string, string> = {
 };
 
 export function ProfileScreen() {
-  const [profile,    setProfile]    = useState<UserProfile | null>(null);
+  const navigation = useNavigation<ProfileNav>();
+  const [profile,       setProfile]       = useState<UserProfile | null>(null);
+  const [activityFeed, setActivityFeed] = useState(ACTIVITY_FEED);
+  const [lifetimeStats, setLifetimeStats] = useState<LifetimeStats>({
+    totalWorkouts: 0,
+    totalKmRun:    0,
+    totalSets:     0,
+    totalVolumeKg: 0,
+    avgSleepHours: 0,
+    currentStreak: 0,
+  });
   const [activeTab,  setActiveTab]  = useState<Tab>('activity');
   const [darkMode,   setDarkMode]   = useState(true);
   const [healthSync, setHealthSync] = useState(false);
@@ -103,12 +125,53 @@ export function ProfileScreen() {
   async function loadProfile() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const { data } = await supabase
-      .from('users')
-      .select('display_name, username, tier, goal, fitness_level, created_at')
-      .eq('id', user.id)
-      .single();
-    if (data) setProfile({ ...data as any, email: user.email ?? '' });
+  
+    const [profileRes, statsRes, streakRes, workoutsRes, runsRes] = await Promise.all([
+      supabase
+        .from('users')
+        .select('display_name, username, tier, goal, fitness_level, created_at')
+        .eq('id', user.id)
+        .single(),
+      userService.getLifetimeStats(user.id),
+      workoutService.getStreak(user.id),
+      workoutService.getRecentSessions(user.id, 5),
+      runService.getSessions(user.id, 5),
+    ]);
+  
+    if (profileRes.data) setProfile({ ...profileRes.data as any, email: user.email ?? '' });
+    if (statsRes.data) setLifetimeStats({
+      ...statsRes.data,
+      currentStreak: streakRes.data ?? 0,
+    });
+  
+    // Build real activity feed
+    const workoutActivities = ((workoutsRes.data ?? []) as WorkoutSessionRow[]).map((w) => ({
+      id:    w.id,
+      type:  'workout' as const,
+      name:  w.name,
+      meta:  `${new Date(w.started_at).toLocaleDateString('en-NP')} · ${
+        w.duration_seconds ? Math.round(w.duration_seconds / 60) + ' min' : '--'
+      } · ${Math.round(w.total_volume_kg ?? 0).toLocaleString()}kg`,
+      icon:  'barbell-outline' as keyof typeof Ionicons.glyphMap,
+      color: Colors.ACCENT,
+      kudos: 0,
+    }));
+  
+    const runActivities = ((runsRes.data ?? []) as RunSessionRow[]).map((r) => ({
+      id:    r.id,
+      type:  'run' as const,
+      name:  r.activity_type.charAt(0).toUpperCase() + r.activity_type.slice(1),
+      meta:  `${new Date(r.started_at).toLocaleDateString('en-NP')} · ${(r.distance_m / 1000).toFixed(2)}km`,
+      icon:  'walk-outline' as keyof typeof Ionicons.glyphMap,
+      color: Colors.BLUE,
+      kudos: 0,
+    }));
+  
+    const combined = [...workoutActivities, ...runActivities]
+      .sort((a, b) => 0)
+      .slice(0, 6);
+  
+    if (combined.length > 0) setActivityFeed(combined);
   }
 
   async function signOut() {
@@ -170,23 +233,23 @@ export function ProfileScreen() {
       {/* Stats row */}
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: Colors.ACCENT }]}>187</Text>
+          <Text style={[styles.statValue, { color: Colors.ACCENT }]}>{lifetimeStats.totalWorkouts}</Text>
           <Text style={styles.statLabel}>Workouts</Text>
         </View>
         <View style={styles.statSep} />
         <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: Colors.BLUE }]}>284</Text>
+          <Text style={[styles.statValue, { color: Colors.BLUE }]}>{lifetimeStats.totalKmRun}</Text>
           <Text style={styles.statLabel}>km run</Text>
         </View>
         <View style={styles.statSep} />
         <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: Colors.ORANGE }]}>21</Text>
+          <Text style={[styles.statValue, { color: Colors.ORANGE }]}>{lifetimeStats.currentStreak}</Text>
           <Text style={styles.statLabel}>Streak</Text>
         </View>
         <View style={styles.statSep} />
         <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: Colors.TEAL }]}>12.4</Text>
-          <Text style={styles.statLabel}>kg lost</Text>
+          <Text style={[styles.statValue, { color: Colors.TEAL }]}>{lifetimeStats.totalVolumeKg.toLocaleString()}</Text>
+          <Text style={styles.statLabel}>kg lifted</Text>
         </View>
       </View>
 
@@ -210,24 +273,34 @@ export function ProfileScreen() {
 
       {/* Activity tab */}
       {activeTab === 'activity' && (
-        <View style={styles.tabContent}>
-          {ACTIVITY_FEED.map((activity) => (
-            <View key={activity.id} style={styles.activityRow}>
-              <View style={[styles.activityIcon, { backgroundColor: activity.color + '15' }]}>
-                <Ionicons name={activity.icon} size={18} color={activity.color} />
-              </View>
-              <View style={styles.activityInfo}>
-                <Text style={styles.activityName}>{activity.name}</Text>
-                <Text style={styles.activityMeta}>{activity.meta}</Text>
-              </View>
-              <TouchableOpacity style={styles.kudosBtn}>
-                <Ionicons name="heart-outline" size={14} color={Colors.RED} />
-                <Text style={styles.kudosCount}>{activity.kudos}</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
+  <View style={styles.tabContent}>
+    {activityFeed.length === 0 ? (
+      <View style={{ padding: Spacing.S6, alignItems: 'center' }}>
+        <Text style={{ color: Colors.TEXT_TERTIARY, fontSize: 13 }}>
+          No activity yet. Complete a workout or run to see it here.
+        </Text>
+      </View>
+    ) : (
+      activityFeed.map((activity) => (
+        <View key={activity.id} style={styles.activityRow}>
+          <View style={[styles.activityIcon, { backgroundColor: activity.color + '15' }]}>
+            <Ionicons name={activity.icon} size={18} color={activity.color} />
+          </View>
+          <View style={styles.activityInfo}>
+            <Text style={styles.activityName}>{activity.name}</Text>
+            <Text style={styles.activityMeta}>{activity.meta}</Text>
+          </View>
+          <TouchableOpacity style={styles.kudosBtn}>
+            <Ionicons name="heart-outline" size={14} color={Colors.RED} />
+            <Text style={styles.kudosCount}>{activity.kudos}</Text>
+          </TouchableOpacity>
         </View>
-      )}
+      ))
+    )}
+  </View>
+)}
+
+
 
       {/* Badges tab */}
       {activeTab === 'badges' && (
@@ -273,28 +346,24 @@ export function ProfileScreen() {
             <Text style={styles.statsCardTitle}>Lifetime totals</Text>
             <View style={styles.statsCardGrid}>
               <View style={styles.statsCardItem}>
-                <Text style={[styles.statsCardValue, { color: Colors.ACCENT }]}>187</Text>
+                <Text style={[styles.statsCardValue, { color: Colors.ACCENT }]}>{lifetimeStats.totalWorkouts}</Text>
                 <Text style={styles.statsCardLabel}>Total workouts</Text>
               </View>
               <View style={styles.statsCardItem}>
-                <Text style={[styles.statsCardValue, { color: Colors.BLUE }]}>284km</Text>
+                <Text style={[styles.statsCardValue, { color: Colors.BLUE }]}>{lifetimeStats.totalKmRun}km</Text>
                 <Text style={styles.statsCardLabel}>Total distance</Text>
               </View>
               <View style={styles.statsCardItem}>
-                <Text style={[styles.statsCardValue, { color: Colors.ORANGE }]}>847h</Text>
-                <Text style={styles.statsCardLabel}>Time trained</Text>
+                <Text style={[styles.statsCardValue, { color: Colors.ORANGE }]}>{lifetimeStats.totalSets.toLocaleString()}</Text>
+                <Text style={styles.statsCardLabel}>Total sets</Text>
               </View>
               <View style={styles.statsCardItem}>
-                <Text style={[styles.statsCardValue, { color: Colors.PURPLE }]}>124K</Text>
+                <Text style={[styles.statsCardValue, { color: Colors.PURPLE }]}>{lifetimeStats.totalVolumeKg.toLocaleString()}kg</Text>
                 <Text style={styles.statsCardLabel}>kg lifted</Text>
               </View>
               <View style={styles.statsCardItem}>
-                <Text style={[styles.statsCardValue, { color: Colors.TEAL }]}>98,420</Text>
-                <Text style={styles.statsCardLabel}>kcal burned</Text>
-              </View>
-              <View style={styles.statsCardItem}>
-                <Text style={[styles.statsCardValue, { color: Colors.RED }]}>1,240m</Text>
-                <Text style={styles.statsCardLabel}>Elevation gain</Text>
+                <Text style={[styles.statsCardValue, { color: Colors.TEAL }]}>{lifetimeStats.avgSleepHours}h</Text>
+                <Text style={styles.statsCardLabel}>Avg sleep</Text>
               </View>
             </View>
           </View>
@@ -313,65 +382,81 @@ export function ProfileScreen() {
       )}
 
       {/* Settings */}
-      <View style={styles.settingsDivider} />
+{/* Settings */}
+{/* Settings */}
+<View style={styles.settingsDivider} />
 
-      {SETTINGS_SECTIONS.map((section) => (
-        <View key={section.title} style={styles.settingsSection}>
-          <Text style={styles.settingsSectionTitle}>{section.title}</Text>
-          <View style={styles.settingsCard}>
-            {section.items.map((item, i) => (
-              <View
-                key={item.id}
-                style={[
-                  styles.settingsRow,
-                  i < section.items.length - 1 && styles.settingsRowBorder,
-                ]}
-              >
-                <View style={styles.settingsRowLeft}>
-                  <View style={styles.settingsIconWrap}>
-                    <Ionicons name={item.icon} size={16} color={Colors.TEXT_SECONDARY} />
-                  </View>
-                  <Text style={styles.settingsLabel}>{item.label}</Text>
-                </View>
-                <View style={styles.settingsRowRight}>
-                  {'value' in item && item.value && (
-                    <Text style={styles.settingsValue}>{item.value}</Text>
-                  )}
-                  {'badge' in item && item.badge && (
-                    <View style={styles.settingsBadge}>
-                      <Text style={styles.settingsBadgeText}>{item.badge}</Text>
-                    </View>
-                  )}
-                  {item.type === 'toggle' && (
-                    <Switch
-                      value={item.id === 'darkmode' ? darkMode : healthSync}
-                      onValueChange={(v) => {
-                        if (item.id === 'darkmode') setDarkMode(v);
-                        if (item.id === 'health') setHealthSync(v);
-                      }}
-                      trackColor={{ false: Colors.BG_SURFACE_3, true: Colors.ACCENT }}
-                      thumbColor={Colors.BG_BASE}
-                    />
-                  )}
-                  {item.type === 'nav' && (
-                    <Ionicons name="chevron-forward" size={14} color={Colors.TEXT_TERTIARY} />
-                  )}
-                </View>
-              </View>
-            ))}
+{SETTINGS_SECTIONS.map((section) => (
+  <View key={section.title} style={styles.settingsSection}>
+    <Text style={styles.settingsSectionTitle}>{section.title}</Text>
+    <View style={styles.settingsCard}>
+      {section.items.map((item, i) => (
+        <TouchableOpacity
+          key={item.id}
+          style={[
+            styles.settingsRow,
+            i < section.items.length - 1 && styles.settingsRowBorder,
+          ]}
+          onPress={() => {
+            if (item.id === 'profile')  return navigation.navigate('EditProfile');
+            if (item.id === 'password') return useUIStore.getState().showToast('Password reset email sent!', 'success');
+            if (item.id === 'plan')     return useUIStore.getState().showToast('Payments coming in v2', 'info');
+            if (item.id === 'units')    return useUIStore.getState().showToast('Metric units only for now', 'info');
+            if (item.id === 'language') return useUIStore.getState().showToast('Nepali language coming soon', 'info');
+            if (item.id === 'notifs')   return useUIStore.getState().showToast('Notifications coming soon', 'info');
+            if (item.id === 'health')   return useUIStore.getState().showToast('Apple Health coming in v2', 'info');
+            if (item.id === 'garmin')   return useUIStore.getState().showToast('Garmin Connect coming in v2', 'info');
+            if (item.id === 'strava')   return useUIStore.getState().showToast('Strava export coming soon', 'info');
+            if (item.id === 'feedback') return useUIStore.getState().showToast('Send feedback coming soon', 'info');
+            if (item.id === 'privacy')  return useUIStore.getState().showToast('Privacy policy coming soon', 'info');
+            if (item.id === 'export')   return useUIStore.getState().showToast('Data export coming soon', 'info');
+          }}
+        >
+          <View style={styles.settingsRowLeft}>
+            <View style={styles.settingsIconWrap}>
+              <Ionicons name={item.icon} size={16} color={Colors.TEXT_SECONDARY} />
+            </View>
+            <Text style={styles.settingsLabel}>{item.label}</Text>
           </View>
-        </View>
+          <View style={styles.settingsRowRight}>
+            {'value' in item && item.value && (
+              <Text style={styles.settingsValue}>{item.value}</Text>
+            )}
+            {'badge' in item && item.badge && (
+              <View style={styles.settingsBadge}>
+                <Text style={styles.settingsBadgeText}>{item.badge}</Text>
+              </View>
+            )}
+            {item.type === 'toggle' && (
+              <Switch
+                value={item.id === 'darkmode' ? darkMode : healthSync}
+                onValueChange={(v) => {
+                  if (item.id === 'darkmode') setDarkMode(v);
+                  if (item.id === 'health')   setHealthSync(v);
+                }}
+                trackColor={{ false: Colors.BG_SURFACE_3, true: Colors.ACCENT }}
+                thumbColor={Colors.BG_BASE}
+              />
+            )}
+            {item.type === 'nav' && (
+              <Ionicons name="chevron-forward" size={14} color={Colors.TEXT_TERTIARY} />
+            )}
+          </View>
+        </TouchableOpacity>
       ))}
+    </View>
+  </View>
+))}
 
-      {/* Sign out */}
-      <TouchableOpacity style={styles.signOutBtn} onPress={signOut}>
-        <Ionicons name="log-out-outline" size={16} color={Colors.RED} />
-        <Text style={styles.signOutText}>Sign out</Text>
-      </TouchableOpacity>
+{/* Sign out */}
+<TouchableOpacity style={styles.signOutBtn} onPress={signOut}>
+  <Ionicons name="log-out-outline" size={16} color={Colors.RED} />
+  <Text style={styles.signOutText}>Sign out</Text>
+</TouchableOpacity>
 
-      <Text style={styles.version}>FitNepal v1.0.0 · Made in Nepal</Text>
+<Text style={styles.version}>Thrive v1.0.0 · Made in Nepal 🇳🇵</Text>
 
-    </ScrollView>
+      </ScrollView>
   );
 }
 

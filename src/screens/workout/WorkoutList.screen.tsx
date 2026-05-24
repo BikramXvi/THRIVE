@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { workoutService } from '../../services/workout.service';
+import type { ExerciseRow } from '../../services/workout.service';
 import {
   View,
   Text,
@@ -6,12 +8,15 @@ import {
   TouchableOpacity,
   StyleSheet,
   Pressable,
+  TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import type { TrainStackParamList } from '../../navigation/TabNavigator';
+import { supabase } from '../../lib/supabase';
+import { useWorkoutStore } from '../../stores/workout.store';
 
 type TrainNav = NativeStackNavigationProp<TrainStackParamList>;
 type Category = 'all' | 'strength' | 'cardio' | 'yoga' | 'hiit';
@@ -143,10 +148,50 @@ const DIFFICULTY_COLOR: Record<string, string> = {
 };
 
 export function WorkoutListScreen() {
-  // ---- hooks must be here, inside the component ----
   const navigation = useNavigation<TrainNav>();
-  const [activeCategory, setActiveCategory] = useState<Category>('all');
-  const [expandedId,     setExpandedId]     = useState<string | null>(null);
+  const [activeCategory,  setActiveCategory]  = useState<Category>('all');
+  const [expandedId,      setExpandedId]      = useState<string | null>(null);
+  const [exercises,       setExercises]       = useState<ExerciseRow[]>([]);
+  const [loadingEx,       setLoadingEx]       = useState(true);
+  const [searchQuery,     setSearchQuery]     = useState('');
+  const { isActive, programName } = useWorkoutStore();
+  const [lastSession,     setLastSession]     = useState<{
+    name:      string;
+    programId: string;
+  } | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadExercises();
+  }, [activeCategory]);
+
+  useEffect(() => {
+    loadLastSession();
+  }, []);
+
+  async function loadLastSession() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    setUserId(user.id);
+
+    const { data } = await workoutService.getRecentSessions(user.id, 1);
+    if (data && data.length > 0) {
+      setLastSession({
+        name:      data[0].name,
+        programId: 'ppl',
+      });
+    }
+  }
+
+  async function loadExercises() {
+    setLoadingEx(true);
+    const { data } = await workoutService.getExercises(
+      activeCategory === 'all' ? undefined : activeCategory,
+      searchQuery
+    );
+    if (data) setExercises(data);
+    setLoadingEx(false);
+  }
 
   const filtered = PROGRAMS.filter(
     (p) => activeCategory === 'all' || p.category === activeCategory
@@ -173,29 +218,79 @@ export function WorkoutListScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Quick start */}
-      <TouchableOpacity
-        style={styles.quickStartCard}
-        activeOpacity={0.85}
-        onPress={() => navigation.navigate('ActiveWorkout')}
-      >
-        <View style={styles.quickStartLeft}>
-          <Text style={styles.quickStartEyebrow}>Continue program</Text>
-          <Text style={styles.quickStartName}>Push day A</Text>
-          <Text style={styles.quickStartMeta}>PPL · Week 3 · Day 1</Text>
-          <View style={styles.quickStartProgress}>
-            <View style={styles.quickStartBar}>
-              <View style={[styles.quickStartFill, { width: '37%' }]} />
-            </View>
-            <Text style={styles.quickStartPct}>37% complete</Text>
-          </View>
+{/* Quick start */}
+{isActive ? (
+  <TouchableOpacity
+    style={styles.quickStartCard}
+    activeOpacity={0.85}
+    onPress={() => navigation.navigate('ActiveWorkout')}  // ✅ NO PARAMS – resumes from store
+  >
+    <View style={styles.quickStartLeft}>
+      <Text style={styles.quickStartEyebrow}>Workout in progress</Text>
+      <Text style={styles.quickStartName}>{programName}</Text>
+      <Text style={styles.quickStartMeta}>Tap to resume</Text>
+      <View style={styles.quickStartProgress}>
+        <View style={styles.quickStartBar}>
+          <View style={[styles.quickStartFill, { width: '50%' }]} />
         </View>
-        <View style={styles.quickStartRight}>
-          <View style={styles.quickStartPlayBtn}>
-            <Ionicons name="play" size={20} color={Colors.BG_BASE} />
-          </View>
+        <Text style={styles.quickStartPct}>In progress</Text>
+      </View>
+    </View>
+    <View style={styles.quickStartRight}>
+      <View style={styles.quickStartPlayBtn}>
+        <Ionicons name="play" size={20} color={Colors.BG_BASE} />
+      </View>
+    </View>
+  </TouchableOpacity>
+) : lastSession ? (
+  <TouchableOpacity
+    style={styles.quickStartCard}
+    activeOpacity={0.85}
+    onPress={() => navigation.navigate('ActiveWorkout', {
+      programId: lastSession.programId,
+      programName: lastSession.name,
+      exercises: [],
+    })}
+  >
+    <View style={styles.quickStartLeft}>
+      <Text style={styles.quickStartEyebrow}>Last workout</Text>
+      <Text style={styles.quickStartName}>{lastSession.name}</Text>
+      <Text style={styles.quickStartMeta}>Tap to repeat</Text>
+    </View>
+    <View style={styles.quickStartRight}>
+      <View style={styles.quickStartPlayBtn}>
+        <Ionicons name="play" size={20} color={Colors.BG_BASE} />
+      </View>
+    </View>
+  </TouchableOpacity>
+) : (
+  <TouchableOpacity
+    style={styles.quickStartCard}
+    activeOpacity={0.85}
+    onPress={() => navigation.navigate('ActiveWorkout', {
+      programId: 'ppl',
+      programName: 'Push day A',
+      exercises: [],
+    })}
+  >
+    <View style={styles.quickStartLeft}>
+      <Text style={styles.quickStartEyebrow}>Quick start</Text>
+      <Text style={styles.quickStartName}>Push day A</Text>
+      <Text style={styles.quickStartMeta}>PPL · Full body · 6 exercises</Text>
+      <View style={styles.quickStartProgress}>
+        <View style={styles.quickStartBar}>
+          <View style={[styles.quickStartFill, { width: '0%' }]} />
         </View>
-      </TouchableOpacity>
+        <Text style={styles.quickStartPct}>Tap to start</Text>
+      </View>
+    </View>
+    <View style={styles.quickStartRight}>
+      <View style={styles.quickStartPlayBtn}>
+        <Ionicons name="play" size={20} color={Colors.BG_BASE} />
+      </View>
+    </View>
+  </TouchableOpacity>
+)}
 
       {/* Category filter */}
       <ScrollView
@@ -282,7 +377,11 @@ export function WorkoutListScreen() {
                 </View>
                 <TouchableOpacity
                   style={styles.startProgramBtn}
-                  onPress={() => navigation.navigate('ActiveWorkout')}
+                  onPress={() => navigation.navigate('ActiveWorkout', {
+                    programId:   program.id,
+                    programName: program.name,
+                    exercises:   [],
+                  })}
                 >
                   <Text style={styles.startProgramText}>Start program</Text>
                   <Ionicons name="arrow-forward" size={14} color={Colors.BG_BASE} />
@@ -294,34 +393,80 @@ export function WorkoutListScreen() {
       })}
 
       {/* Quick exercises */}
-      <View style={styles.sectionGap}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.eyebrowSm}>Quick log</Text>
-          <TouchableOpacity>
-            <Text style={styles.seeAll}>See all exercises</Text>
+{/* Quick exercises */}
+<View style={styles.sectionGap}>
+  <View style={styles.sectionHeaderRow}>
+    <Text style={styles.eyebrowSm}>Exercise library</Text>
+    <TouchableOpacity>
+      <Text style={styles.seeAll}>{exercises.length} exercises</Text>
+    </TouchableOpacity>
+  </View>
+
+  {/* Search bar */}
+  <View style={styles.searchWrap}>
+    <Ionicons name="search-outline" size={14} color={Colors.TEXT_TERTIARY} />
+    <TextInput
+      style={styles.searchInput}
+      value={searchQuery}
+      onChangeText={(v) => {
+        setSearchQuery(v);
+        loadExercises();
+      }}
+      placeholder="Search exercises..."
+      placeholderTextColor={Colors.TEXT_TERTIARY}
+    />
+    {searchQuery.length > 0 && (
+      <TouchableOpacity onPress={() => {
+        setSearchQuery('');
+        loadExercises();
+      }}>
+        <Ionicons name="close-circle" size={14} color={Colors.TEXT_TERTIARY} />
+      </TouchableOpacity>
+    )}
+  </View>
+
+  {loadingEx ? (
+    <View style={{ padding: Spacing.S5, alignItems: 'center' }}>
+      <Text style={{ color: Colors.TEXT_TERTIARY, fontSize: 13 }}>Loading...</Text>
+    </View>
+  ) : exercises.length === 0 ? (
+    <View style={{ padding: Spacing.S5, alignItems: 'center' }}>
+      <Text style={{ color: Colors.TEXT_TERTIARY, fontSize: 13 }}>No exercises found</Text>
+    </View>
+  ) : (
+    exercises.slice(0, 15).map((ex, i) => (
+      <View
+        key={ex.id}
+        style={[
+          styles.exRow,
+          i === Math.min(exercises.length, 15) - 1 && styles.exRowLast,
+        ]}
+      >
+        <View style={styles.exNumWrap}>
+          <Text style={styles.exNum}>{String(i + 1).padStart(2, '0')}</Text>
+        </View>
+        <View style={styles.exInfo}>
+          <Text style={styles.exName}>{ex.name}</Text>
+          <Text style={styles.exMeta}>
+            {ex.muscle_group.join(', ')} · {ex.difficulty ?? 'beginner'}
+          </Text>
+          {ex.name_ne && (
+            <Text style={styles.exNameNe}>{ex.name_ne}</Text>
+          )}
+        </View>
+        <View style={styles.exRight}>
+          <Text style={styles.exCategory}>{ex.category}</Text>
+          <TouchableOpacity
+            style={styles.exLogBtn}
+            onPress={() => navigation.navigate('ActiveWorkout')}
+          >
+            <Ionicons name="add" size={14} color={Colors.ACCENT} />
           </TouchableOpacity>
         </View>
-
-        {QUICK_WORKOUTS.map((ex, i) => (
-          <View
-            key={ex.id}
-            style={[
-              styles.exRow,
-              i === QUICK_WORKOUTS.length - 1 && styles.exRowLast,
-            ]}
-          >
-            <Text style={styles.exNum}>{String(i + 1).padStart(2, '0')}</Text>
-            <View style={styles.exInfo}>
-              <Text style={styles.exName}>{ex.name}</Text>
-              <Text style={styles.exMeta}>{ex.muscle}</Text>
-            </View>
-            <Text style={styles.exSets}>{ex.sets} × {ex.reps}</Text>
-            <TouchableOpacity style={styles.exLogBtn}>
-              <Ionicons name="add" size={14} color={Colors.ACCENT} />
-            </TouchableOpacity>
-          </View>
-        ))}
       </View>
+    ))
+  )}
+</View>
 
     </ScrollView>
   );
@@ -591,6 +736,43 @@ const styles = StyleSheet.create({
   },
   sectionGap: {
     marginTop: Spacing.S6,
+  },
+  searchWrap: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               Spacing.S2,
+    marginHorizontal:  Spacing.S5,
+    marginBottom:      Spacing.S3,
+    backgroundColor:   Colors.BG_SURFACE,
+    borderRadius:      Radius.LG,
+    paddingHorizontal: Spacing.S4,
+    paddingVertical:   Spacing.S3,
+    borderWidth:       StyleSheet.hairlineWidth,
+    borderColor:       Colors.BORDER,
+  },
+  searchInput: {
+    flex:     1,
+    fontSize: 13,
+    color:    Colors.TEXT_PRIMARY,
+  },
+  exNumWrap: {
+    width: 28,
+  },
+  exRight: {
+    alignItems: 'center',
+    gap:        4,
+  },
+  exCategory: {
+    fontSize:      9,
+    color:         Colors.TEXT_TERTIARY,
+    fontWeight:    '500',
+    textTransform: 'uppercase',
+    letterSpacing: 0.05,
+  },
+  exNameNe: {
+    fontSize:   11,
+    color:      Colors.ACCENT,
+    fontWeight: '500',
   },
   exRow: {
     flexDirection:     'row',

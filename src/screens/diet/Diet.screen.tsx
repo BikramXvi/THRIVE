@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,58 +6,16 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
-  Pressable,
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../lib/supabase';
 import { Colors, Spacing, Radius } from '../../constants/theme';
-
+import { dietService } from '../../services/diet.service';
+import type { FoodItemRow, MealLogRow } from '../../services/diet.service';
+import { useUIStore } from '../../stores/ui.store';
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
-interface FoodItem {
-  id:       string;
-  name:     string;
-  name_ne?: string;
-  calories: number;
-  protein:  number;
-  carbs:    number;
-  fat:      number;
-  serving:  string;
-  isNepali?: boolean;
-}
-
-interface LoggedFood {
-  id:       string;
-  food:     FoodItem;
-  meal:     MealType;
-  servings: number;
-}
-
-const NEPALI_FOODS: FoodItem[] = [
-  { id: 'n1', name: 'Dal Bhat',        name_ne: 'दाल भात',    calories: 485, protein: 18, carbs: 82, fat: 8,  serving: '1 plate',    isNepali: true },
-  { id: 'n2', name: 'Chicken Momo',    name_ne: 'चिकन मोमो',   calories: 390, protein: 24, carbs: 42, fat: 12, serving: '10 pieces',  isNepali: true },
-  { id: 'n3', name: 'Buff Momo',       name_ne: 'बफ मोमो',     calories: 420, protein: 26, carbs: 42, fat: 14, serving: '10 pieces',  isNepali: true },
-  { id: 'n4', name: 'Sel Roti',        name_ne: 'सेल रोटी',    calories: 180, protein: 3,  carbs: 32, fat: 5,  serving: '1 piece',    isNepali: true },
-  { id: 'n5', name: 'Chiura',          name_ne: 'चिउरा',       calories: 345, protein: 7,  carbs: 76, fat: 1,  serving: '100g',       isNepali: true },
-  { id: 'n6', name: 'Aloo Tama',       name_ne: 'आलु तामा',    calories: 145, protein: 4,  carbs: 28, fat: 3,  serving: '1 bowl',     isNepali: true },
-  { id: 'n7', name: 'Gundruk',         name_ne: 'गुन्द्रुक',   calories: 35,  protein: 3,  carbs: 5,  fat: 0,  serving: '50g',        isNepali: true },
-  { id: 'n8', name: 'Thukpa',          name_ne: 'थुक्पा',      calories: 320, protein: 16, carbs: 48, fat: 7,  serving: '1 bowl',     isNepali: true },
-  { id: 'n9', name: 'Chatamari',       name_ne: 'चताम्मरी',   calories: 210, protein: 8,  carbs: 30, fat: 7,  serving: '1 piece',    isNepali: true },
-  { id: 'n10',name: 'Dhindo',          name_ne: 'ढिँडो',       calories: 280, protein: 5,  carbs: 62, fat: 1,  serving: '1 bowl',     isNepali: true },
-];
-
-const GLOBAL_FOODS: FoodItem[] = [
-  { id: 'g1', name: 'Chicken Breast',  calories: 165, protein: 31, carbs: 0,  fat: 4,  serving: '100g' },
-  { id: 'g2', name: 'Brown Rice',      calories: 216, protein: 5,  carbs: 45, fat: 2,  serving: '1 cup cooked' },
-  { id: 'g3', name: 'Whole Egg',       calories: 72,  protein: 6,  carbs: 0,  fat: 5,  serving: '1 large' },
-  { id: 'g4', name: 'Banana',          calories: 105, protein: 1,  carbs: 27, fat: 0,  serving: '1 medium' },
-  { id: 'g5', name: 'Greek Yogurt',    calories: 130, protein: 17, carbs: 9,  fat: 0,  serving: '200g' },
-  { id: 'g6', name: 'Oats',            calories: 307, protein: 11, carbs: 55, fat: 5,  serving: '100g dry' },
-  { id: 'g7', name: 'Whey Protein',    calories: 120, protein: 25, carbs: 3,  fat: 2,  serving: '1 scoop' },
-  { id: 'g8', name: 'Almonds',         calories: 164, protein: 6,  carbs: 6,  fat: 14, serving: '28g' },
-];
-
-const ALL_FOODS = [...NEPALI_FOODS, ...GLOBAL_FOODS];
 
 const MEAL_CONFIG: {
   id:    MealType;
@@ -124,52 +82,96 @@ const macroStyles = StyleSheet.create({
 });
 
 export function DietScreen() {
-  const [logged,       setLogged]       = useState<LoggedFood[]>([
-    { id: 'l1', food: NEPALI_FOODS[0], meal: 'breakfast', servings: 1 },
-    { id: 'l2', food: NEPALI_FOODS[1], meal: 'lunch',     servings: 1 },
-  ]);
+  const [userId,       setUserId]       = useState<string | null>(null);
+  const [logged,       setLogged]       = useState<MealLogRow[]>([]);
   const [water,        setWater]        = useState(3);
   const [searchQuery,  setSearchQuery]  = useState('');
   const [addingMeal,   setAddingMeal]   = useState<MealType | null>(null);
   const [filterNepali, setFilterNepali] = useState(false);
+  const [searchResults, setSearchResults] = useState<FoodItemRow[]>([]);
+  const [loadingLogs,   setLoadingLogs]   = useState(true);
+  const [searching,     setSearching]     = useState(false);  
 
-  const totalCals    = logged.reduce((s, l) => s + l.food.calories * l.servings, 0);
-  const totalProtein = logged.reduce((s, l) => s + l.food.protein  * l.servings, 0);
-  const totalCarbs   = logged.reduce((s, l) => s + l.food.carbs    * l.servings, 0);
-  const totalFat     = logged.reduce((s, l) => s + l.food.fat      * l.servings, 0);
+
+  useEffect(() => {
+    loadUser();
+  }, []);
+
+  useEffect(() => {
+    if (addingMeal) {
+      searchFoods();
+    }
+  }, [searchQuery, filterNepali, addingMeal]);
+
+  async function loadUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    setUserId(user.id);
+    loadTodayLogs(user.id);
+  }
+
+  async function loadTodayLogs(uid: string) {
+    setLoadingLogs(true);
+    const { data } = await dietService.getTodayLogs(uid);
+    if (data) setLogged(data);
+    setLoadingLogs(false);
+  }
+
+  async function searchFoods() {
+    setSearching(true);
+    const { data } = await dietService.searchFoods(searchQuery, filterNepali);
+    if (data) setSearchResults(data);
+    setSearching(false);
+  }
+
+  async function addFood(food: FoodItemRow) {
+    if (!addingMeal || !userId) return;
+
+    const servingSize = food.serving_size ?? 100;
+    const servingUnit = food.serving_unit ?? 'g';
+
+    const { error } = await dietService.logFood({
+      userId,
+      foodItemId:  food.id,
+      mealType:    addingMeal,
+      servingSize,
+      servingUnit,
+      food,
+    });
+
+    if (error) {
+      useUIStore.getState().showToast('Could not log food', 'error');
+      return;
+    }
+
+    useUIStore.getState().showToast(`${food.name} logged`, 'success');
+    setAddingMeal(null);
+    setSearchQuery('');
+    if (userId) loadTodayLogs(userId);
+  }
+
+  async function removeFood(logId: string) {
+    const { error } = await dietService.deleteLog(logId);
+    if (error) {
+      useUIStore.getState().showToast('Could not remove food', 'error');
+      return;
+    }
+    setLogged((prev) => prev.filter((l) => l.id !== logId));
+  }
+
+  const totalCals    = logged.reduce((s, l) => s + l.calories, 0);
+  const totalProtein = logged.reduce((s, l) => s + (l.protein_g ?? 0), 0);
+  const totalCarbs   = logged.reduce((s, l) => s + (l.carbs_g   ?? 0), 0);
+  const totalFat     = logged.reduce((s, l) => s + (l.fat_g     ?? 0), 0);
   const remaining    = CALORIE_GOAL - totalCals;
   const calPct       = Math.min(totalCals / CALORIE_GOAL, 1);
 
-  const searchResults = ALL_FOODS.filter((f) => {
-    const matchesQuery  = f.name.toLowerCase().includes(searchQuery.toLowerCase())
-      || (f.name_ne && f.name_ne.includes(searchQuery));
-    const matchesFilter = !filterNepali || f.isNepali;
-    return matchesQuery && matchesFilter;
-  });
-
-  function addFood(food: FoodItem) {
-    if (!addingMeal) return;
-    const newLog: LoggedFood = {
-      id:       Math.random().toString(36).slice(2),
-      food,
-      meal:     addingMeal,
-      servings: 1,
-    };
-    setLogged((prev) => [...prev, newLog]);
-    setAddingMeal(null);
-    setSearchQuery('');
-  }
-
-  function removeFood(id: string) {
-    setLogged((prev) => prev.filter((l) => l.id !== id));
-  }
-
   function getMealLogs(meal: MealType) {
-    return logged.filter((l) => l.meal === meal);
+    return logged.filter((l) => l.meal_type === meal);
   }
 
   function getMealCalories(meal: MealType) {
-    return getMealLogs(meal).reduce((s, l) => s + l.food.calories * l.servings, 0);
+    return getMealLogs(meal).reduce((s, l) => s + l.calories, 0);
   }
 
   return (
@@ -295,19 +297,19 @@ export function DietScreen() {
                     <View key={log.id} style={styles.foodRow}>
                       <View style={styles.foodInfo}>
                         <View style={styles.foodNameRow}>
-                          <Text style={styles.foodName}>{log.food.name}</Text>
-                          {log.food.isNepali && (
+                          <Text style={styles.foodName}>{log.food_items.name}</Text>
+                          {log.food_items.is_nepali && (
                             <View style={styles.nepaliTag}>
                               <Text style={styles.nepaliTagText}>नेपाली</Text>
                             </View>
                           )}
                         </View>
                         <Text style={styles.foodServing}>
-                          {log.food.serving} · {log.food.protein}g protein
+                          {log.serving_size}{log.serving_unit} · {Math.round(log.protein_g ?? 0)}g protein
                         </Text>
                       </View>
                       <Text style={styles.foodCals}>
-                        {log.food.calories * log.servings}
+                        {log.calories}
                       </Text>
                       <TouchableOpacity
                         style={styles.removeBtn}
@@ -426,7 +428,7 @@ export function DietScreen() {
                   <View style={modalStyles.foodItemLeft}>
                     <View style={modalStyles.foodItemNameRow}>
                       <Text style={modalStyles.foodItemName}>{food.name}</Text>
-                      {food.isNepali && (
+                      {food.is_nepali && (
                         <View style={modalStyles.nepaliTag}>
                           <Text style={modalStyles.nepaliTagText}>नेपाली</Text>
                         </View>
@@ -436,12 +438,12 @@ export function DietScreen() {
                       <Text style={modalStyles.foodItemNe}>{food.name_ne}</Text>
                     )}
                     <Text style={modalStyles.foodItemMeta}>
-                      {food.serving} · P {food.protein}g · C {food.carbs}g · F {food.fat}g
+                      {food.serving_size ?? 100}{food.serving_unit ?? 'g'} · P {food.protein_per_100g ?? 0}g · C {food.carbs_per_100g ?? 0}g · F {food.fat_per_100g ?? 0}g
                     </Text>
                   </View>
                   <View style={modalStyles.foodItemRight}>
-                    <Text style={modalStyles.foodItemCals}>{food.calories}</Text>
-                    <Text style={modalStyles.foodItemCalLabel}>kcal</Text>
+                    <Text style={modalStyles.foodItemCals}>{food.calories_per_100g}</Text>
+                    <Text style={modalStyles.foodItemCalLabel}>kcal/100g</Text>
                   </View>
                 </TouchableOpacity>
               ))
